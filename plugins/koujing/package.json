@@ -1,0 +1,59 @@
+{
+  "name": "dsh-plugin-koujing",
+  "version": "0.2.0",
+  "description": "把要求或规定做成可核对的规则卡并写进对应的 AGENTS.md，兼管规则台账、跨文件检索、项目计划与时间线",
+  "type": "module",
+  "license": "MIT",
+  "author": "zou240",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "agents-md",
+    "rules",
+    "plans",
+    "planning",
+    "timeline"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zou240/dsh-plugins.git",
+    "directory": "plugins/koujing"
+  },
+  "homepage": "https://github.com/zou240/dsh-plugins/tree/main/plugins/koujing",
+  "bugs": {
+    "url": "https://github.com/zou240/dsh-plugins/issues"
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.1 <0.3.0"
+  },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/core.js",
+    "lib/plan.js",
+    "lib/timeline.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "domains.example.json",
+    "LICENSE",
+    "README.md",
+    "README.en.md"
+  ]
+}

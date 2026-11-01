@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Rules & Plans",
+    "description": "Turns a stated rule into a checkable intake card and writes it into the right AGENTS.md, and keeps project plans, a rule ledger, cross-file search and a timeline."
+  }
+}
