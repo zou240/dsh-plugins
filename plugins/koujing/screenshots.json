@@ -1,0 +1,20 @@
+{
+  "screenshots": [
+    {
+      "file": "assets/ledger.png",
+      "caption": {
+        "zh": "规则台账：登记过的规定、落点与原文",
+        "en": "Rule ledger: registered rules, target file and text"
+      }
+    },
+    {
+      "file": "assets/timeline.png",
+      "caption": {
+        "zh": "记录流：把以往的改动、报错、计划按时间串起来",
+        "en": "Record stream: changes, errors and plans threaded by date"
+      }
+    }
+  ],
+  "note": "Screenshots were taken against a fabricated HOME (demo rules + a demo plan); no real user data is shown.",
+  "icon": "icon-512.png"
+}
