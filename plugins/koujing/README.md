@@ -12,8 +12,11 @@
 
 ## 快速开始
 
+npm 包尚未发布，目前从仓库装：
+
 ```bash
-dsh plugin add dsh-plugin-koujing
+git clone https://github.com/zou240/dsh-plugins
+dsh plugin add ./dsh-plugins/plugins/koujing
 ```
 
 装完新开一个会话，说一句「以后回答我时先给结论」，模型会先出卡、把待确认的问题一次问完，再把这条写进 `~/.dsh/AGENTS.md`。

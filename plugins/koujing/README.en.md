@@ -12,8 +12,11 @@ Turn a one-line requirement into a checkable **rule card** and write it into the
 
 ## Quick start
 
+The npm package is not published yet; install from the repository:
+
 ```bash
-dsh plugin add dsh-plugin-koujing
+git clone https://github.com/zou240/dsh-plugins
+dsh plugin add ./dsh-plugins/plugins/koujing
 ```
 
 Start a new session and say "always give me the conclusion first". The model shows a card, asks every open question in one round, then writes the rule into `~/.dsh/AGENTS.md`.
