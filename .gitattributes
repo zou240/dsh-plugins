@@ -1,0 +1,5 @@
+# 源码统一用 LF（Windows 上加这行可以消掉 core.autocrlf 的换行告警）
+* text=auto eol=lf
+
+*.png binary
+*.ico binary

@@ -1,0 +1,8 @@
+node_modules/
+*.tgz
+
+# dev/*.mjs 每次运行都会重建这些夹具（临时 HOME / 临时工作区 / 临时路由测试目录），不要提交
+**/dev/.home/
+**/dev/.ws/
+**/dev/.ws2/
+**/dev/.home-routes/
