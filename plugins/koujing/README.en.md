@@ -88,6 +88,8 @@ Three invariants:
 ## Limits
 
 - "Does this sound like a rule" is a heuristic (keywords + similarity); pass `kind` explicitly when it guesses wrong.
+- **The target section is a heuristic too**: a short sentence may land in a section that looks close word-wise but is not semantically close. Check the section before writing, or pass `section` explicitly.
+- **Duplicate detection only compares inside one file** (with a high similarity threshold): an equivalent rule in another file or workspace is not flagged automatically. When you suspect one exists, check by hand to avoid a second copy.
 - It only writes rules; project plans always go through `koujing_plan`.
 - The two read-only routes accept no writes: the panel cannot edit rules — use `koujing_commit`, which backs up and records.
 
