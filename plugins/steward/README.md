@@ -90,6 +90,8 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 插件自身不建数据库。
 
+> **`STATUS.md` / `HANDOFF-*.md` 只留本地，不随发布。** 这两份是项目内部当前态与收尾快照，内容含真源目录、profile 链接等**本机绝对路径**；发布仓库已用 `.gitignore` 的 `**/STATUS.md` 排除，`package.json` 的 `files` 白名单也不含它们。要对外分享时另出脱敏副本，别直接提交。
+
 ## 计划的三种更新模式（`save` 的 `mode`）
 
 | mode | 未传的节 | 传了的节 | `steps` | 手写小节 |
