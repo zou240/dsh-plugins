@@ -9,3 +9,6 @@ node_modules/
 **/dev/.home-*/
 **/dev/.ws-*/
 **/dev/.ws2-*/
+
+# 项目内部当前态（含本机绝对路径），只留本地，不发布
+**/STATUS.md
