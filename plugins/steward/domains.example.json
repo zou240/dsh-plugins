@@ -1,0 +1,22 @@
+{
+  "_comment": "可选：把「某类说法」映射到你的某个工作区，让 steward_card 的落点建议更准。复制到 ~/.dsh/steward/domains.json 后按需改；不存在时插件只用中性规则（说法里点名了工作区就落它，否则判用户级）。pattern 是 JS 正则表达式源码，workspace 必须与 workspace.json 里的 title 一致（大小写不敏感）。threads 可选，用来覆盖时间线的主题线。",
+  "routes": [
+    {
+      "pattern": "invoice|receipt|expense",
+      "workspace": "finance",
+      "tag": "finance"
+    },
+    {
+      "pattern": "手机|android|adb",
+      "workspace": "mobile-tools",
+      "tag": "mobile"
+    }
+  ],
+  "threads": [
+    {
+      "id": "infra",
+      "name": "基础设施",
+      "pattern": "server|deploy|部署"
+    }
+  ]
+}

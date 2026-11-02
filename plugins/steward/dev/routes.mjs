@@ -79,8 +79,15 @@ apply(ctx);
 const out = [];
 const ok = (name, cond, extra = '') => out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? `  ${extra}` : ''}`);
 
-ok('注册了两条只读路由', registered.length === 2, registered.map((r) => r.path).join(', '));
-ok('注册了六个工具', toolNames.length === 6, toolNames.join(', '));
+ok('注册了三条只读路由', registered.length === 3, registered.map((r) => r.path).join(', '));
+const NEW_TOOLS = ['card', 'plan', 'commit', 'search', 'ledger', 'change', 'project', 'handoff', 'log', 'timeline'];
+const oldNames = NEW_TOOLS.map((n) => `koujing_${n}`);
+const newNames = NEW_TOOLS.map((n) => `steward_${n}`);
+ok(
+  '注册了十个工具 + 十个旧名别名',
+  toolNames.length === 20 && newNames.every((n) => toolNames.includes(n)) && oldNames.every((n) => toolNames.includes(n)),
+  `${toolNames.length} 个：${toolNames.join(', ')}`,
+);
 
 const wantLang = String(process.env.KOUJING_POLICY_LANG ?? '').toLowerCase() === 'en' ? 'en' : 'zh';
 const wantHead = wantLang === 'zh' ? '## 规则纪律' : '## Rule discipline';
@@ -103,7 +110,7 @@ for (const route of registered) {
   ok(`${route.path} 无准入服务→200`, res.statusCode === 200 && json !== null, `status=${res.statusCode}`);
 }
 
-// 2 connection 拒绝：两条路由必须一致地拒绝（timeline 曾漏加这关）
+// 2 connection 拒绝：三条路由必须一致地拒绝（timeline 曾漏加这关）
 connection = { requestRejection: () => 401 };
 for (const route of registered) {
   const res = makeRes();

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Project & Rules Steward",
+    "description": "Turns a stated rule into a checkable intake card and writes it into the right AGENTS.md, and keeps the project registry, project plans, handoff/close snapshots, a change ledger, per-project logs, a timeline and cross-file search."
+  }
+}

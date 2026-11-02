@@ -5,7 +5,7 @@
  *   1. 单一来源 —— 规定正文只写进 AGENTS.md，台账只是索引（记录来源会话、落点、时间）。
  *   2. 不做判断 —— 这里只做能确定的事：找文件、找小节、查重、查冲突、列盲点。
  *      语义判断留给模型，缺口留给用户点选项。
- *   3. 可回退 —— 每次写入前备份到 ~/.dsh/koujing/backups/。
+ *   3. 可回退 —— 每次写入前备份到 ~/.dsh/steward/backups/。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -113,7 +113,7 @@ export function bullets(text) {
 // ---------------------------------------------------------------- 落点判断
 
 // 领域路由表：把「某类说法」映射到「某个已登记工作区」。
-// 这属于个人 / 团队配置，不进包：存在 ~/.dsh/koujing/domains.json 时以它为准，
+// 这属于个人 / 团队配置，不进包：存在 ~/.dsh/steward/domains.json 时以它为准，
 // 格式见同目录 domains.example.json；不存在则只用中性兜底（下面 pickPlacement 的后半段）。
 const DOMAINS_FILE = path.join(STATE_DIR, 'domains.json');
 
@@ -147,7 +147,7 @@ export function pickPlacement(statement) {
         wsPath: w.path,
         wsTitle: w.title,
         file: path.join(w.path, 'AGENTS.md'),
-        reason: `提到「${hit.tag}」，按 ~/.dsh/koujing/domains.json 的路由表落到 ${w.title}`,
+        reason: `提到「${hit.tag}」，按 ~/.dsh/steward/domains.json 的路由表落到 ${w.title}`,
       };
     }
     return {

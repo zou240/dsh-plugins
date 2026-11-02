@@ -1,6 +1,0 @@
-# 规则与计划 —— 用户说要求 / 规定时，先出卡再动手。
-# 只挂一个 Host 插件；client 半（台账面板）由后续版本追加。
-- insert:
-    - id: koujing
-      name: 'dsh-plugin-koujing'
-      inject: [tools, systemPrompt]

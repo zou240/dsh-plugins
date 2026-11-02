@@ -1,17 +1,17 @@
 /**
  * 「口径」Client 半：设置页里的台账面板。
- * 数据来自 Host 注册的只读路由 /koujing/ledger.json。
+ * 数据来自 Host 注册的只读路由 /steward/ledger.json。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-plugin-koujing',
+  id: 'dsh-plugin-steward',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
     const { useCallback, useEffect, useMemo, useState } = React;
 
     const ZH = {
-      title: '规则台账',
-      subtitle: '你说过的长期规定都登记在这里；点开一条看原文、落点与来源。',
+      title: '统筹项目与规则',
+      subtitle: '台账 / 记录流 / 项目：你说过的长期规定、按时间串起的改动与计划、已登记项目的当前态。',
       search: '搜索标题、正文或路径',
       refresh: '刷新',
       empty: '还没有登记过规定。在对话里说一句长期有效的规定，我会先出卡、确认后再落库。',
@@ -32,10 +32,21 @@ window.__ModuleLoader__.load({
       tlEmpty: '还没有可串联的记录。',
       tlThreads: '主线',
       tlCount: '条记录',
+      tabProjects: '项目',
+      pjTitle: '项目档案',
+      pjSubtitle: '已登记项目的当前态：真源、状态、最后更新与指针健康度（只读；写入用 steward_project / steward_handoff）。',
+      pjCount: '个项目',
+      pjEmpty: '还没有登记项目。用 steward_project action=register 建档。',
+      pjBroken: 'projects.json 解析失败：写操作会被拒绝，先修复或恢复备份。',
+      pjSourceMissing: '源目录不在',
+      pjStatusMissing: 'STATUS 未生成',
+      pjStatusForeign: 'statusFile 不是 STATUS.md',
+      pjPlanMissing: '计划文件不在',
+      pjClosed: '已收尾',
     };
     const EN = {
-      title: 'Rule Ledger',
-      subtitle: 'Standing rules you confirmed are registered here. Open one to see its text, location, and source.',
+      title: 'Project & Rules Steward',
+      subtitle: 'Ledger / Stream / Projects: standing rules, a dated timeline of changes and plans, and the registered projects.',
       search: 'Search title, text, or path',
       refresh: 'Refresh',
       empty: 'Nothing registered yet. State a standing rule in chat and I will show a card first, then write it.',
@@ -56,6 +67,17 @@ window.__ModuleLoader__.load({
       tlEmpty: 'No records to thread yet.',
       tlThreads: 'Threads',
       tlCount: 'records',
+      tabProjects: 'Projects',
+      pjTitle: 'Project registry',
+      pjSubtitle: 'Current state of registered projects: source, status, last update, pointer health (read-only; writes go through steward_project / steward_handoff).',
+      pjCount: 'projects',
+      pjEmpty: 'No projects registered yet. Use steward_project action=register.',
+      pjBroken: 'projects.json failed to parse: writes are refused until it is repaired or restored from backup.',
+      pjSourceMissing: 'source missing',
+      pjStatusMissing: 'STATUS not generated',
+      pjStatusForeign: 'statusFile is not a STATUS.md',
+      pjPlanMissing: 'plan file missing',
+      pjClosed: 'closed',
     };
 
     const S = {
@@ -203,7 +225,7 @@ window.__ModuleLoader__.load({
 
       const load = useCallback(() => {
         setState((prev) => ({ ...prev, loading: true, error: null }));
-        fetch('/koujing/ledger.json', { cache: 'no-store' })
+        fetch('/steward/ledger.json', { cache: 'no-store' })
           .then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             return r.json();
@@ -268,7 +290,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState({ loading: true, error: null, tl: null });
       const load = useCallback(() => {
         setState((prev) => ({ ...prev, loading: true, error: null }));
-        fetch('/koujing/timeline.json', { cache: 'no-store' })
+        fetch('/steward/timeline.json', { cache: 'no-store' })
           .then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             return r.json();
@@ -357,6 +379,79 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function Projects({ ctx }) {
+      const t = useTranslator(ctx);
+      const [state, setState] = useState({ loading: true, error: null, data: null });
+      const load = useCallback(() => {
+        setState((prev) => ({ ...prev, loading: true, error: null }));
+        fetch('/steward/projects.json', { cache: 'no-store' })
+          .then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          })
+          .then((j) => setState({ loading: false, error: null, data: j }))
+          .catch((e) => setState({ loading: false, error: String(e?.message ?? e), data: null }));
+      }, []);
+      useEffect(() => {
+        load();
+      }, [load]);
+
+      const list = state.data?.projects ?? [];
+      const flagsOf = (p) => {
+        const f = [];
+        if (!p.health?.sourceOk) f.push(t('pjSourceMissing'));
+        if (p.health?.statusState === 'missing') f.push(t('pjStatusMissing'));
+        if (p.health?.statusState === 'foreign') f.push(t('pjStatusForeign'));
+        if (p.health?.planOk === false) f.push(t('pjPlanMissing'));
+        if (p.health?.closed) f.push(t('pjClosed'));
+        return f;
+      };
+
+      return h(
+        'div',
+        { style: S.wrap },
+        h(
+          'div',
+          { style: S.head },
+          h('h2', { style: S.title }, t('pjTitle')),
+          list.length ? h('span', { style: S.count }, `${list.length} ${t('pjCount')}`) : null,
+        ),
+        h('p', { style: S.sub }, t('pjSubtitle')),
+        h(
+          'div',
+          { style: S.bar },
+          h('button', { style: S.btn, onClick: load, disabled: state.loading }, state.loading ? '…' : t('refresh')),
+        ),
+        state.data?.broken ? h('div', { style: S.error }, t('pjBroken')) : null,
+        state.error ? h('div', { style: S.error }, `${t('error')}：${state.error}`) : null,
+        list.length
+          ? list.map((p) => {
+              const flags = flagsOf(p);
+              return h(
+                'div',
+                { key: p.key, style: { ...S.card, cursor: 'default' } },
+                h('div', { style: S.name }, `${p.title} · ${p.key}`),
+                h(
+                  'div',
+                  { style: S.meta },
+                  `${p.status}${p.updated ? ` · ${t('updated')} ${p.updated}` : ''}`,
+                ),
+                h('div', { style: S.body }, p.source || ''),
+                flags.length
+                  ? h(
+                      'div',
+                      { style: { ...S.meta, color: 'var(--dsw-alias-state-error-primary)' } },
+                      `⚠ ${flags.join(' · ')}`,
+                    )
+                  : h('div', { style: S.meta }, '✓'),
+              );
+            })
+          : !state.loading && !state.error
+            ? h('div', { style: S.empty }, t('pjEmpty'))
+            : null,
+      );
+    }
+
     function Shell(props) {
       const [tab, setTab] = useState('ledger');
       const t = useTranslator(props.ctx);
@@ -383,8 +478,9 @@ window.__ModuleLoader__.load({
           { style: { display: 'flex', gap: 6, padding: '18px 22px 0' } },
           tabBtn('ledger', t('tabLedger')),
           tabBtn('timeline', t('tabTimeline')),
+          tabBtn('projects', t('tabProjects')),
         ),
-        tab === 'ledger' ? h(Panel, props) : h(Timeline, props),
+        tab === 'ledger' ? h(Panel, props) : tab === 'timeline' ? h(Timeline, props) : h(Projects, props),
       );
     }
 

@@ -5,12 +5,15 @@
  *   - plugin-registry-details.md 的 D7 修改历史 / D8 报错记录
  *   - 各工作区的 PLAN-*.md
  *   - 规则台账 ledger.json
+ *   - 改动账本 ~/.dsh/CHANGES.md（2026-11-03 起：跨会话的「改了什么」都在这里）
  *
  * 输出：事件数组（按日期升序）+ 主题线（把同一件事的多条串成一条线）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { DSH, exists, ledgerReport, readText } from './core.js';
+import { listChanges } from './change.js';
+import { allLogs } from './log.js';
 import { listPlans } from './plan.js';
 
 const DETAILS = path.join(DSH, 'plugin-registry-details.md');
@@ -40,7 +43,7 @@ export function parseTable(text, heading) {
 
 const DOMAINS_FILE = path.join(DSH, 'koujing', 'domains.json');
 
-// 主题线默认值保持中性；个人 / 团队的主题线可在 ~/.dsh/koujing/domains.json 的 threads 里覆盖。
+// 主题线默认值保持中性；个人 / 团队的主题线可在 ~/.dsh/steward/domains.json 的 threads 里覆盖。
 const DEFAULT_THREADS = [
   { id: 'docs', name: '文档与规则', re: /文档|手册|索引|规则|lint|门禁/i },
   { id: 'tools', name: '工具与插件', re: /插件|工具|profile|bundle|脚本|cli/i },
@@ -139,6 +142,39 @@ export function buildTimeline() {
     });
   }
 
+  // 改动账本：跨会话「改了什么」的唯一来源，按行并入
+  for (const c of listChanges(500)) {
+    const at = String(c.at ?? '').slice(0, 10);
+    if (!at) continue;
+    events.push({
+      at,
+      kind: 'change',
+      subject: clean(c.object),
+      title: clip(clean(c.change), 56),
+      detail: clip(clean(c.change), 600),
+      why: '',
+      evidence: clip(clean(c.evidence), 300),
+      rollback: clip(clean(c.rollback), 240),
+      source: 'CHANGES.md',
+    });
+  }
+
+  // 项目过程日志：块状记录按时间并入（报错类标成 error）
+  for (const l of allLogs(300)) {
+    if (!l.at) continue;
+    events.push({
+      at: String(l.at).slice(0, 10),
+      kind: l.type === '报错' ? 'error' : 'change',
+      subject: clean(l.project),
+      title: clip(clean(l.text), 56),
+      detail: clip(clean(l.text), 600),
+      why: '',
+      evidence: '',
+      rollback: '',
+      source: 'logs',
+    });
+  }
+
   // 规则台账按「文件」聚成一条，避免几十条规定淹没真正的改动
   const ledgerRows = ledgerReport();
   const byFile = new Map();
@@ -159,8 +195,8 @@ export function buildTimeline() {
       subject: '',
       title: `规则台账 · ${where} 登记 ${rows.length} 条${stale ? `（${stale} 条失效）` : ''}`,
       detail: clip(rows.map((r) => r.title).join(' / '), 300),
-      why: '规定总表；逐条查用 koujing_ledger，细则正文在各自的 AGENTS.md',
-      evidence: `${file} · 台账 ~/.dsh/koujing/ledger.json`,
+      why: '规定总表；逐条查用 steward_ledger，细则正文在各自的 AGENTS.md',
+      evidence: `${file} · 台账 ~/.dsh/steward/ledger.json`,
       rollback: '',
       source: '规则台账',
     });
@@ -202,7 +238,7 @@ export function renderTimelineMarkdown(tl = buildTimeline()) {
   L.push(`# 时间线：${tl.range.from ?? '—'} → ${tl.range.to ?? '—'} 的本机改动`);
   L.push('');
   L.push(`> 生成于 ${tl.generatedAt} · 共 ${tl.total} 条 · 范围 ${tl.range.from ?? '—'} → ${tl.range.to ?? '—'}`);
-  L.push('> 来源：`plugin-registry-details.md` 的 D7 修改历史 / D8 报错记录、各工作区 `PLAN-*.md`、规则台账。本文件由 `koujing_timeline` 生成，重跑会覆盖。');
+  L.push('> 来源：`plugin-registry-details.md` 的 D7 修改历史 / D8 报错记录、各工作区 `PLAN-*.md`、规则台账、改动账本 `~/.dsh/CHANGES.md`。本文件由 `steward_timeline` 生成，重跑会覆盖。');
   L.push('');
   L.push('## 主线');
   L.push('');

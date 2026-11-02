@@ -1,0 +1,6 @@
+# 统筹项目与规则 —— 用户说要求 / 规定时，先出卡再动手。
+# 只挂一个 Host 插件；client 半（台账面板）由后续版本追加。
+- insert:
+    - id: steward
+      name: 'dsh-plugin-steward'
+      inject: [tools, systemPrompt]

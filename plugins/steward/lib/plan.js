@@ -179,7 +179,7 @@ export function resolvePlan(ref) {
   if (hit) return hit.file;
   const fuzzy = listPlans().find((p) => p.title.toLowerCase().includes(base) || p.file.toLowerCase().includes(base));
   if (fuzzy) return fuzzy.file;
-  throw new Error(`没找到计划：${r}。可用 koujing_plan list 看现有计划`);
+  throw new Error(`没找到计划：${r}。可用 steward_plan list 看现有计划`);
 }
 
 function render({ title, goal, gap, scope, steps, modes, accept, risks, status, created, progress, isNew, extras }) {
@@ -491,4 +491,119 @@ export function getPlan(ref) {
   const file = resolvePlan(ref);
   const text = fs.readFileSync(file, 'utf8');
   return { file, text, parsed: dropUndefined(parsePlan(text)) };
+}
+
+// ---------------------------------------------------------------- 计划质量检查 / 骨架生成（0.2.3）
+
+const REQUIRED_SECTIONS = ['目标', '范围', '步骤', '验收', '风险', '进度'];
+
+/** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾。 */
+export function auditPlanText(text) {
+  const src = String(text ?? '');
+  const heads = [...src.matchAll(/^##\s+(.+)$/gm)].map((m) => m[1].trim());
+  const created = (src.match(/^created:\s*(\S+)/m) ?? ['', ''])[1];
+  const issues = [];
+  const add = (level, msg) => issues.push({ level, msg });
+
+  for (const r of REQUIRED_SECTIONS) {
+    if (!heads.some((h) => h.includes(r))) add('fail', `缺必填节：含「${r}」的一节`);
+  }
+  const steps = [...src.matchAll(/^- \[([ xX])\]\s*(\d+)\.\s*(.+)$/gm)].map((m) => ({
+    done: m[1].toLowerCase() === 'x',
+    n: m[2],
+    text: m[3].trim(),
+  }));
+  if (steps.length < 3) add('warn', `步骤只有 ${steps.length} 条（建议 ≥3）`);
+  const legacy = created < '2026-11-02';
+  const noLevel = steps.filter((s) => !/\[(Off|Low|High|Max)\]/.test(s.text));
+  if (noLevel.length && !legacy) add('warn', `${noLevel.length} 条步骤没标档位（[High]/[Max]…）`);
+  const noRoute = steps.filter((s) => !/\[(自做|MiMo-flash|MiMo-pro)\]/.test(s.text));
+  if (noRoute.length && !legacy) add('warn', `${noRoute.length} 条步骤没标派单（[自做]/[MiMo-…]）`);
+
+  const scopeBlock = (src.match(/##\s*范围[\s\S]*?(?=\n##\s|$)/) ?? [''])[0];
+  const isDelivery = /交付|成品|打包|脚本|插件|工具包/.test(scopeBlock);
+  // 历史计划（11-03 前建立）从宽：不追溯要求用法矩阵，也不报提醒
+  if (isDelivery && !src.includes('文档用法矩阵') && created >= '2026-11-03') {
+    add('fail', '交付类项目缺「文档用法矩阵」节（2026-11-03 后新计划必须写）');
+  }
+
+  const status = (src.match(/^status:\s*(\S+)/m) ?? ['', 'active'])[1];
+  const done = steps.filter((s) => s.done).length;
+  if (steps.length && done === steps.length && status === 'active') add('warn', '步骤已全勾但 status 仍是 active（该 update 收尾）');
+  if (done < steps.length && status === 'done') add('warn', `status=done 但只完成 ${done}/${steps.length} 步`);
+
+  const fails = issues.filter((i) => i.level === 'fail').length;
+  return { ok: fails === 0, issues, steps: steps.length, done, status };
+}
+
+export function auditPlan(ref) {
+  const r = getPlan(ref);
+  return { file: r.file, ...auditPlanText(r.text) };
+}
+
+export function auditAllPlans() {
+  return listPlans().map((p) => {
+    try {
+      const r = auditPlan(p.file);
+      return { ...r, title: p.title, workspace: p.workspace };
+    } catch (e) {
+      return { file: p.file, title: p.title, ok: false, issues: [{ level: 'fail', msg: '读不到：' + e.message }], steps: 0, done: 0, status: p.status };
+    }
+  });
+}
+
+/** 生成计划骨架：六个必填节 + 交付类默认带「文档用法矩阵」+ 步骤占位（含档位/派单标记）。 */
+export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = [] }) {
+  if (!workspace) throw new Error('需要 workspace');
+  if (!title) throw new Error('需要 title');
+  if (!exists(workspace)) throw new Error(`工作区不存在：${workspace}`);
+  const file = path.join(workspace, `PLAN-${slugify(title)}.md`);
+  if (exists(file)) return { file, created: false, exists: true };
+  const day = stampDate();
+  const stepLines = (steps.length ? steps : ['（待补：第一件可验证的事）', '（待补：做完能交付的东西）', '（待补：验收与收尾）'])
+    .map((s, i) => `- [ ] ${i + 1}. ${String(s).trim()} — [High] [自做]`)
+    .join('\n');
+  const text = [
+    '---',
+    `title: ${title}`,
+    'status: active',
+    `created: ${day}`,
+    `updated: ${day}`,
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    '## 目标',
+    '',
+    goal || '（待补：做完算什么成功，一句可验收的话）',
+    '',
+    '## 范围',
+    '',
+    scope || '做：（待补）\n\n不做：（待补）',
+    '',
+    '## 步骤',
+    '',
+    stepLines,
+    '',
+    '## 验收',
+    '',
+    '（待补：逐条可执行的判据；交付类补「文档用法矩阵」）',
+    '',
+    '### 文档用法矩阵',
+    '',
+    '| 用法 | 期望 | 实跑证据（退出码 / 产物路径） |',
+    '|---|---|---|',
+    '| （待补） | （待补） | （待补） |',
+    '',
+    '## 风险回滚',
+    '',
+    '（待补：最坏会怎样、怎么退、备份在哪）',
+    '',
+    '## 进度记录',
+    '',
+    `- ${day} 建立计划（steward_plan scaffold）`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(file, text, 'utf8');
+  return { file, created: true, exists: false };
 }
