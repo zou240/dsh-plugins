@@ -178,8 +178,13 @@ window.__ModuleLoader__.load({
       return t;
     }
 
-    function shortDate(iso) {
-      return typeof iso === 'string' ? iso.slice(0, 10) : '';
+    function shortDate(v) {
+      if (typeof v !== 'string' || !v) return '';
+      if (!v.includes('T')) return v.slice(0, 10);
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return v.slice(0, 10);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
     }
 
     function Card({ row, t }) {

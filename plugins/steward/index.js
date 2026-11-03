@@ -22,6 +22,7 @@ import {
   findConflicts,
   ledgerPath,
   ledgerReport,
+  localStamp,
   looksLikeRule,
   pickPlacement,
   pickSection,
@@ -812,7 +813,7 @@ export function apply(ctx) {
             try {
               if (!admit(webCtx, req, res)) return;
               const body = JSON.stringify({
-                generatedAt: new Date().toISOString(),
+                generatedAt: localStamp(),
                 entries: ledgerReport(),
               });
               res.statusCode = 200;
@@ -887,7 +888,7 @@ export function apply(ctx) {
                   closedAt: p.closedAt || '',
                   health: healthOf({ key, ...p }),
                 }));
-                const body = JSON.stringify({ generatedAt: new Date().toISOString(), broken, projects });
+                const body = JSON.stringify({ generatedAt: localStamp(), broken, projects });
                 res.statusCode = 200;
                 res.setHeader('content-type', 'application/json; charset=utf-8');
                 res.setHeader('cache-control', 'no-store');

@@ -32,6 +32,28 @@ export const exists = (p) => {
 export const readText = (p) => fs.readFileSync(p, 'utf8');
 export const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
 
+// 时间一律本地（2026-11-03 用户口径）：不要 toISOString() 那种 UTC 写法。
+const pad2 = (n) => String(n).padStart(2, '0');
+/** 本地 `YYYY-MM-DD HH:mm`（台账 at / 展示用）。 */
+export function localStamp(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+/** 本地 `YYYYMMDD`（台账 id 段用）。 */
+export function localDateId(d = new Date()) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+}
+/** 本地 14 位 `YYYYMMDDHHmmss`（备份文件名用）。 */
+export function localFileStamp(d = new Date()) {
+  return `${localDateId(d)}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+/** 旧台账里存的 ISO(UTC) 时间 → 本地 `YYYY-MM-DD HH:mm`；已是本地格式原样返回。 */
+export function toLocalTimeString(v) {
+  if (typeof v !== 'string') return v;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? v : localStamp(d);
+}
+
 export function normalize(s) {
   return String(s ?? '')
     .toLowerCase()
@@ -437,6 +459,8 @@ export function readLedger() {
   try {
     const j = JSON.parse(readText(LEDGER_FILE));
     if (!Array.isArray(j.entries)) j.entries = [];
+    // 旧记录 at 是 ISO(UTC)，读时换成本地；新记录本来就是本地格式，原样保留。
+    j.entries = j.entries.map((e) => ({ ...e, at: toLocalTimeString(e.at) }));
     return j;
   } catch {
     return { version: 1, entries: [] };
@@ -523,7 +547,7 @@ export function searchRules(query, limit = 20) {
 function backup(file) {
   if (!exists(file)) return null;
   ensureDir(BACKUP_DIR);
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  const stamp = localFileStamp();
   const dest = path.join(BACKUP_DIR, `${path.basename(path.dirname(file))}-${path.basename(file)}-${stamp}.bak`);
   fs.copyFileSync(file, dest);
   return dest;
@@ -589,13 +613,13 @@ export function commitRule({ title, body, scope, wsPath, section, session, tags 
     writeAtomic(file, next);
     const ledger = readLedger();
     const entry = {
-      id: `kj-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(2).toString('hex')}`,
+      id: `kj-${localDateId()}-${crypto.randomBytes(2).toString('hex')}`,
       title: String(title ?? cleanBody.slice(0, 40)),
       body: cleanBody,
       scope,
       file,
       heading: name,
-      at: new Date().toISOString(),
+      at: localStamp(),
       session: session ?? null,
       tags: Array.isArray(tags) ? tags : [],
     };
@@ -623,13 +647,13 @@ export function commitRule({ title, body, scope, wsPath, section, session, tags 
   const startLine = out.indexOf(`- ${cleanBody}`) + 1;
   const ledger = readLedger();
   const entry = {
-    id: `kj-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(2).toString('hex')}`,
+    id: `kj-${localDateId()}-${crypto.randomBytes(2).toString('hex')}`,
     title: String(title ?? cleanBody.slice(0, 40)),
     body: cleanBody,
     scope,
     file,
     heading: head.text,
-    at: new Date().toISOString(),
+    at: localStamp(),
     session: session ?? null,
     tags: Array.isArray(tags) ? tags : [],
   };
