@@ -305,8 +305,12 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   const dir = p.handoffDir || path.dirname(p.statusFile);
   ensureDir(dir);
   // 同日二次收尾不许覆盖已冻结的快照（2026-11-03 审计 P0-3）：已存在则 -2、-3 递增
+  let seq = 1;
   let handoff = path.join(dir, `HANDOFF-${day}.md`);
-  for (let i = 2; exists(handoff); i += 1) handoff = path.join(dir, `HANDOFF-${day}-${i}.md`);
+  while (exists(handoff)) {
+    seq += 1;
+    handoff = path.join(dir, `HANDOFF-${day}-${seq}.md`);
+  }
   // 指针带目录：handoffDir 与 statusFile 不同目录时（如 hud），只写文件名指不到（审计 P2-8）
   const handoffLabel = path.dirname(p.statusFile) === dir ? path.basename(handoff) : handoff;
 
@@ -344,5 +348,5 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   });
 
   updateProject(key, { status: 'done', closedAt: at, updated: at });
-  return { handoff, statusFile: p.statusFile, plan, change };
+  return { handoff, seq, statusFile: p.statusFile, plan, change };
 }

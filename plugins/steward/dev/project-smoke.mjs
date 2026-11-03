@@ -84,6 +84,7 @@ P.writeStatus(P.getProject('demo'));
 const a = P.closeProject('demo', { note: '第一次收尾' });
 const b = P.closeProject('demo', { note: '第二次收尾' });
 check(a.handoff !== b.handoff, '两次 close 落到不同文件', `${a.handoff} / ${b.handoff}`);
+check(a.seq === 1 && b.seq === 2, '返回的今日第 N 份序号正确', `${a.seq} / ${b.seq}`);
 check(fs.readFileSync(a.handoff, 'utf8').includes('第一次收尾'), '第一份快照内容仍在');
 
 console.log('=== 5. 已收尾拒写；reopen 后可再写 ===');

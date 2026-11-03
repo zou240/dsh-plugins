@@ -345,7 +345,7 @@ const PARAMS = {
       risks: { type: 'string', description: 'save：风险与回滚' },
       status: { type: 'string', enum: ['active', 'paused', 'done'], description: 'save/update：计划状态' },
       plan: { type: 'string', description: 'get/update：计划绝对路径，或计划名（PLAN-xxx.md / xxx）' },
-      progress: { type: 'string', description: 'update：追加一条带时间的进度记录' },
+      progress: { type: 'string', description: 'update：追加一条带时间的进度记录（save 不接受，传给 save 会报错）' },
       step: { type: 'string', description: 'update：步骤序号（如 "3"）或步骤文字片段' },
       done: { type: 'boolean', description: 'update：配合 step，true=勾选（默认），false=取消勾选' },
     },
@@ -467,6 +467,7 @@ const TOOLS = [
           risks: args?.risks,
           status: args?.status,
           mode: args?.mode,
+          progress: args?.progress,
         });
         const L = [`${r.created ? '已建立' : '已更新'}计划：${r.file}（${r.mode}）`];
         const s = r.steps;
@@ -672,7 +673,8 @@ const TOOLS = [
     run: async (args) => {
       if (args?.action === 'close') {
         const r = closeProject(args?.key, { note: args?.note ?? '', planDone: args?.planDone !== false });
-        const L = [`已收尾：${r.handoff}`, `STATUS：${r.statusFile}（顶部已标「已收尾」）`, `账本：${r.change.file}:${r.change.lineNo}`];
+        const L = [`已收尾：${r.handoff}（今日第 ${r.seq} 份冻结件）`, `STATUS：${r.statusFile}（顶部已标「已收尾」）`, `账本：${r.change.file}:${r.change.lineNo}`];
+        if (r.seq > 1) L.push(`说明：同日已是第 ${r.seq} 次收尾，前 ${r.seq - 1} 份按 P0-3 保留不动`);
         if (r.plan) L.push(r.plan.error ? `计划未改：${r.plan.error}` : '计划已标 done');
         return { text: L.join('\n'), result: r };
       }

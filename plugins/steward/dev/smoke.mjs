@@ -160,6 +160,17 @@ const u2 = plan.updatePlan({ ref: path.join(WS, 'PLAN-demo-project.md'), stepDon
 ok('plan 连续更新仍可解析', u2.steps.length === 3 && u2.steps[2].done === true, JSON.stringify(u2.steps.map((s) => s.done)));
 plan.savePlan({ workspace: WS, title: 'demo-project' });
 ok('plan 重存保留进度', fs.readFileSync(plan1.file, 'utf8').includes('第二次更新'));
+let progErr = '';
+try {
+  plan.savePlan({ workspace: WS, title: 'demo-project', progress: '不该被 save 落盘' });
+} catch (e) {
+  progErr = e.message;
+}
+ok(
+  'save 收到 progress 直接报错（指回 update）',
+  progErr.includes('update') && !fs.readFileSync(plan1.file, 'utf8').includes('不该被 save 落盘'),
+  progErr || '没有抛错',
+);
 
 // 12 计划更新语义（mode=merge / append / replace，2026-10-31）
 const pfile = plan1.file;

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-steward",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "把要求或规定做成可核对的规则卡并写进对应的 AGENTS.md，并统筹项目：档案、计划、交接、改动账本、过程日志与时间线",
   "type": "module",
   "license": "MIT",

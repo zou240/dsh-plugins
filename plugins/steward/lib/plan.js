@@ -308,7 +308,11 @@ function mergeSteps(oldSteps, incoming, mode) {
   return { steps: out, stat };
 }
 
-export function savePlan({ workspace, title, goal, gap, scope, steps, modes, accept, risks, status, mode }) {
+export function savePlan({ workspace, title, goal, gap, scope, steps, modes, accept, risks, status, mode, progress }) {
+  // 2026-11-04：save 曾经静默丢掉 progress（复盘 A4），改成直接报错指回 update
+  if (progress !== undefined && String(progress).trim()) {
+    throw new Error('save 不写进度记录：请改用 steward_plan action=update（save 只写节与步骤）');
+  }
   if (!workspace) throw new Error('需要 workspace：计划写到哪个工作区根目录');
   if (!exists(workspace)) throw new Error(`工作区不存在：${workspace}`);
   if (!title) throw new Error('需要 title');
