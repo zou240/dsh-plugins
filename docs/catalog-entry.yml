@@ -1,11 +1,12 @@
-# 提交到 awesome-dsh-plugin 的条目（PR 目标：data/plugins/zou240__dsh-plugins--plugins-koujing.yml）
+# 提交到 awesome-dsh-plugin 的条目（PR 目标：data/plugins/zou240__dsh-plugins--plugins-steward.yml）
 # 规则来源：contributing.md（2026-11-02 抓取，2026-11-03 复核）—— monorepo 子包用 `owner/repo#subname` + 子树 URL，
 # 文件名 `owner__repo--子包路径（斜杠换横杠）.yml`；只有 description.en 必填；icon 必须是 GitHub 托管的位图（180×180 PNG）。
 # 标量一律加引号：`#`（带前导空格的）与 `: ` 在未加引号的 YAML 标量里会被解析器吃成注释/映射分隔。
-url: 'https://github.com/zou240/dsh-plugins/tree/main/plugins/koujing'
-name: 'zou240/dsh-plugins#koujing'
+# 2026-11-04：子包 koujing 已改名 steward，路径与图标全部跟改；包已发 npm（dsh-plugin-steward@0.2.3）。
+url: 'https://github.com/zou240/dsh-plugins/tree/main/plugins/steward'
+name: 'zou240/dsh-plugins#steward'
 category: workflow
 description:
-  en: 'Turns a stated rule into a checkable intake card and writes it into the right AGENTS.md, and keeps project plans, a rule ledger, cross-file search and a timeline.'
-  zh: '把一句话的要求做成可核对的规则卡并写进对应的 AGENTS.md，同时管理项目计划、规则台账、跨文件检索与时间线。'
-icon: 'https://raw.githubusercontent.com/zou240/dsh-plugins/main/plugins/koujing/icon-180.png'
+  en: 'Turns a stated rule into a checkable intake card and writes it into the right AGENTS.md, and keeps project plans, a rule ledger, project records, handoffs, a change log and a timeline.'
+  zh: '把一句话的要求做成可核对的规则卡并写进对应的 AGENTS.md，同时统管项目档案、计划、交接、改动账本与时间线。'
+icon: 'https://raw.githubusercontent.com/zou240/dsh-plugins/main/plugins/steward/icon-180.png'

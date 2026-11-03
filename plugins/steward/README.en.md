@@ -12,7 +12,13 @@ Turn a one-line requirement into a checkable **rule card** and write it into the
 
 ## Quick start
 
-The npm package is not published yet; install from the repository:
+Install from npm (<https://www.npmjs.com/package/dsh-plugin-steward>):
+
+```bash
+dsh plugin add dsh-plugin-steward
+```
+
+To track the latest commits (main branch) instead:
 
 ```bash
 git clone https://github.com/zou240/dsh-plugins

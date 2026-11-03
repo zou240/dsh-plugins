@@ -12,7 +12,13 @@
 
 ## 快速开始
 
-npm 包尚未发布，目前从仓库装：
+从 npm 装（<https://www.npmjs.com/package/dsh-plugin-steward>）：
+
+```bash
+dsh plugin add dsh-plugin-steward
+```
+
+想跟进仓库最新提交（main 分支）：
 
 ```bash
 git clone https://github.com/zou240/dsh-plugins
