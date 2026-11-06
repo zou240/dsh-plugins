@@ -331,6 +331,81 @@ ok(
   JSON.stringify(unknownRisk.issues),
 );
 
+// 15 批次 1：同一套节模型 + 老计划夹具（golden / 往返 / CRLF / BOM / 无编号 / 代码围栏 / 原子写）
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const scSaved = plan.parsePlan(fs.readFileSync(sc.file, 'utf8'));
+ok(
+  '15.1 scaffold 的节顺序 = 节模型顺序（无 gap/parallel/modes）',
+  eq(plan.parseSections(fs.readFileSync(sc.file, 'utf8')).map((s) => s.name), ['目标', '范围', '步骤', '验收', '风险 / 回滚', '进度记录']),
+  plan.parseSections(fs.readFileSync(sc.file, 'utf8')).map((s) => s.name).join(' | '),
+);
+plan.savePlan({ workspace: WS2, title: 'demo-scaffold' });
+const sc3 = plan.parsePlan(fs.readFileSync(sc.file, 'utf8'));
+ok('15.2 save 幂等：再存一次 plan 模型逐字段相同（golden）', eq(scSaved, sc3), sc3.extras.map((e) => e.name).join(',') || '无手写节');
+
+// CRLF：update 必须保留换行符，勾步骤不能把文件改成混行
+const crlfFile = path.join(WS2, 'PLAN-crlf.md');
+const crlfBase = [
+  '---', 'title: crlf', 'status: active', 'created: 2026-11-01', '---', '', '# crlf', '',
+  '## 目标', '', 'g', '', '## 范围', '', 's', '', '## 步骤', '', '- [ ] 1. a [High] [自做]', '',
+  '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-01 建立', '',
+].join('\r\n');
+fs.writeFileSync(crlfFile, crlfBase, 'utf8');
+plan.updatePlan({ ref: crlfFile, stepDone: 1, progress: 'CRLF 测试' });
+const crlfAfter = fs.readFileSync(crlfFile, 'utf8');
+ok(
+  '15.3 CRLF 计划 update 保留 CRLF 且步骤可勾',
+  /- \[x\] 1\. a/.test(crlfAfter) && !/[^\r]\n/.test(crlfAfter) && crlfAfter.includes('CRLF 测试'),
+  `${(crlfAfter.match(/\r\n/g) ?? []).length} 个 CRLF`,
+);
+
+// BOM：带 BOM 的 frontmatter 要能读（否则 status 回落 active），update 不能写出两份 frontmatter
+const bomFile = path.join(WS2, 'PLAN-bom.md');
+const bomBase = crlfBase.replace(/\r\n/g, '\n').replace('status: active', 'status: done');
+fs.writeFileSync(bomFile, `\uFEFF${bomBase}`, 'utf8');
+const bomParsed = plan.parsePlan(fs.readFileSync(bomFile, 'utf8'));
+plan.updatePlan({ ref: bomFile, progress: 'BOM 测试' });
+const bomAfter = fs.readFileSync(bomFile, 'utf8');
+ok(
+  '15.4 BOM 计划 meta 能读且 update 不复制 frontmatter',
+  bomParsed.status === 'done' && bomAfter.startsWith('\uFEFF---') && (bomAfter.replace(/^\uFEFF/, '').match(/^---$/gm) ?? []).length === 2 && bomAfter.includes('BOM 测试'),
+  JSON.stringify({ status: bomParsed.status, dashes: (bomAfter.replace(/^\uFEFF/, '').match(/^---$/gm) ?? []).length }),
+);
+
+// 无编号步骤：parse 能读，update 按文字能勾，audit 不再报「步骤只有 0 条」
+const unFile = path.join(WS2, 'PLAN-unnumbered.md');
+fs.writeFileSync(
+  unFile,
+  ['---', 'title: unnumbered', 'status: active', 'created: 2026-11-01', '---', '', '# unnumbered', '',
+    '## 目标', '', 'g', '', '## 范围', '', 's', '', '## 步骤', '',
+    '- [ ] 无编号步骤一 [High] [自做]', '- [ ] 无编号步骤二 [High] [自做]', '- [ ] 无编号步骤三 [High] [自做]', '',
+    '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-01 建立', ''].join('\n'),
+  'utf8',
+);
+const unParsed = plan.parsePlan(fs.readFileSync(unFile, 'utf8'));
+plan.updatePlan({ ref: unFile, stepDone: '步骤二' });
+const unAfter = fs.readFileSync(unFile, 'utf8');
+const unAudit = plan.auditPlanText(unAfter);
+ok(
+  '15.5 无编号步骤可解析、可勾、audit 计数',
+  unParsed.steps.length === 3 && unParsed.steps[0].text === '无编号步骤一 [High] [自做]' && /- \[x\] 无编号步骤二/.test(unAfter) && !unAudit.issues.some((i) => i.msg.includes('步骤只有')),
+  JSON.stringify({ steps: unParsed.steps.length, issues: unAudit.issues }),
+);
+
+// 代码围栏：围栏内的 `##` 不算节，正文要原样留在所属节里
+const fenceText = mkPlan().replace('## 验收\n\ny', '## 验收\n\ny\n\n```js\n## 假节\nconst a = 1;\n```');
+const fenceSections = plan.parseSections(fenceText.split(/^---$/m).slice(2).join('---'));
+const fenceParsed = plan.parsePlan(fenceText);
+ok(
+  '15.6 代码围栏里的 ## 不被当成节',
+  !fenceSections.some((s) => s.name === '假节') && fenceParsed.accept.includes('## 假节') && fenceParsed.extras.length === 0,
+  fenceSections.map((s) => s.name).join(' | '),
+);
+
+// 原子写：所有 save / update / scaffold 之后目录里不能残留临时文件
+const tmpLeft = [...fs.readdirSync(WS), ...fs.readdirSync(WS2)].filter((n) => /\.tmp-\d+-\d+$/.test(n));
+ok('15.7 原子写不残留 .tmp-* 半成品', tmpLeft.length === 0, tmpLeft.join(',') || '无');
+
 console.log(out.join('\n'));
 console.log(`\n台账文件：${core.ledgerPath()}`);
 process.exit(out.some((l) => l.startsWith('FAIL')) ? 1 : 0);
