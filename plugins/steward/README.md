@@ -158,8 +158,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 ## 自测
 
 ```bash
-node dev/smoke.mjs    # 核心逻辑（临时 HOME，不碰真实规则）
-node dev/routes.mjs   # 两个只读路由的 200 / 401 / 放行
+node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 票据 25 夹具 / 项目 / 并发写）
 ```
 
 ## 许可

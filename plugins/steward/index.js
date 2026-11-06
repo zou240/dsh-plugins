@@ -315,7 +315,7 @@ const PARAMS = {
       action: {
         type: 'string',
         enum: ['save', 'list', 'get', 'update', 'check', 'scaffold'],
-        description: 'save=建立或增量更新计划；list=列计划；get=读全文；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）',
+        description: 'save=建立或增量更新计划；list=列计划；get=读全文（含 parsed.decisions）；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾/决策票据与前沿）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）',
       },
       mode: {
         type: 'string',
@@ -332,6 +332,11 @@ const PARAMS = {
           'save（按需）：差距对照——对标某个方案/竞品时，逐项写「它有什么 / 我们现状 / 判定（缺·弱·相当·我们更强·不做）/ 落点」，只在补齐、选型、移植类项目加',
       },
       scope: { type: 'string', description: 'save：范围（做 / 不做）' },
+      decisions: {
+        type: 'string',
+        description:
+          'save（按需）：决策票据节内容（票块，不含「## 决策票据」标题）。每票 `### T-01 标题` + 字段行（type / status / blocked_by / question / claimed_by / claimed_at / resolution / resolved_at / links）；空串 = 空节',
+      },
       steps: {
         type: 'array',
         items: { type: 'string' },
@@ -423,7 +428,7 @@ const TOOLS = [
   {
     name: 'steward_plan',
     description:
-      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。',
+      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。',
     parameters: PARAMS.plan,
     isConcurrencySafe: () => false,
     run: async (args, exec, ctx) => {
@@ -462,6 +467,12 @@ const TOOLS = [
         const L = [`计划检查 ${list.length} 份：${list.length - fails} 份合格，${fails} 份有硬缺口`];
         for (const r of list) {
           L.push(`${r.ok ? '✓' : '✗'} ${path.basename(r.file)}（${r.done}/${r.steps}，status=${r.status}）`);
+          if (r.decisions) {
+            const d = r.decisions;
+            L.push(
+              `    票据 open ${d.open} / claimed ${d.claimed} / resolved ${d.resolved} / out-of-scope ${d.outOfScope} / invalid ${d.invalid}；前沿：${d.frontier.length ? d.frontier.join(', ') : '（无）'}`,
+            );
+          }
           for (const i of r.issues.filter((x) => x.level === 'fail')) L.push(`    [FAIL] ${i.msg}`);
           for (const i of r.issues.filter((x) => x.level === 'warn')) L.push(`    [warn] ${i.msg}`);
         }
@@ -485,6 +496,7 @@ const TOOLS = [
           goal: args?.goal,
           gap: args?.gap,
           scope: args?.scope,
+          decisions: args?.decisions,
           steps: args?.steps,
           parallel: args?.parallel,
           modes: args?.modes,
@@ -510,6 +522,12 @@ const TOOLS = [
         if (r.sections.appended.length) L.push(`- 追加节：${r.sections.appended.join('、')}`);
         if (r.sections.keptExtras.length) L.push(`- 保留手写节：${r.sections.keptExtras.join('、')}`);
         if (r.sections.droppedExtras.length) L.push(`- 丢弃手写节：${r.sections.droppedExtras.join('、')}`);
+        if (r.decisions) {
+          const d = r.decisions;
+          L.push(
+            `- 决策票据：open ${d.open} / claimed ${d.claimed} / resolved ${d.resolved} / out-of-scope ${d.outOfScope} / invalid ${d.invalid}${d.issues.length ? `（issues ${d.issues.length} 条）` : ''}`,
+          );
+        }
         if (!r.created && r.mode === 'replace') L.push('- 注意：replace 已整篇重写，未传的节现在是「（待补）」');
         L.push('- 提示：改过文件的话用 steward_change 记一行（tools\\gate.cmd 会查未登记改动）');
         return { text: L.join('\n'), result: r };

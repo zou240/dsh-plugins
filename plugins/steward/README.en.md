@@ -114,8 +114,7 @@ Three invariants:
 ## Tests
 
 ```bash
-node dev/smoke.mjs    # core logic against a temporary HOME
-node dev/routes.mjs   # 200 / 401 / allow for both read-only routes
+node dev/all.mjs      # all suites against an isolated HOME (core / routes / tickets / projects / concurrent writes)
 ```
 
 ## License

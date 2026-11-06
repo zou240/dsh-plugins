@@ -28,6 +28,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { exists, workspaces } from './core.js';
+import { parseDecisions, renderDecisions, decisionCounts, firstTickets, PENDING_STATUSES, DECISION_CODE_ORDER } from './decisions.js';
 
 const PLAN_RE = /^PLAN-(.+)\.md$/i;
 const MODES = ['merge', 'append', 'replace'];
@@ -95,6 +96,7 @@ function splitFrontmatter(text) {
 const NAME_TO_KEY = {
   目标: 'goal',
   差距对照: 'gap',
+  决策票据: 'decisions',
   范围: 'scope',
   步骤: 'steps',
   '并行 / 工作树': 'parallel',
@@ -127,6 +129,7 @@ const SECTIONS = [
   { key: 'goal', name: '目标', required: true },
   { key: 'gap', name: '差距对照', optional: true },
   { key: 'scope', name: '范围', required: true },
+  { key: 'decisions', name: '决策票据', optional: true, special: true },
   { key: 'steps', name: '步骤', required: true },
   { key: 'parallel', name: '并行 / 工作树', optional: true },
   { key: 'modes', name: '执行档位', optional: true },
@@ -135,8 +138,8 @@ const SECTIONS = [
   { key: 'progress', name: '进度记录', required: true, short: '进度' },
 ];
 const SECTION_BY_KEY = Object.fromEntries(SECTIONS.map((s) => [s.key, s]));
-/** save 会写回的节（步骤单独走 mergeSteps，进度只由 update 追加） */
-const SAVE_KEYS = SECTIONS.filter((s) => s.key !== 'steps' && s.key !== 'progress').map((s) => s.key);
+/** save 会写回的节（步骤单独走 mergeSteps，进度只由 update 追加，决策票据单独走六形态） */
+const SAVE_KEYS = SECTIONS.filter((s) => !s.special && s.key !== 'steps' && s.key !== 'progress').map((s) => s.key);
 
 /** 按 key 取首个同名节的正文；没出现就不在 map 里（区分「没写」与「写空了」） */
 function sectionsByKey(body) {
@@ -193,7 +196,12 @@ export function parsePlan(text) {
     status: meta.status || 'active',
   };
   // 必填节缺失 → ''；按需节缺失 → undefined（save 靠这个区分「没写」和「写空了」）
-  for (const s of SECTIONS) out[s.key] = s.optional ? (s.key in byKey ? byKey[s.key] : undefined) : (byKey[s.key] ?? '');
+  for (const s of SECTIONS) {
+    if (s.special) continue;
+    out[s.key] = s.optional ? (s.key in byKey ? byKey[s.key] : undefined) : (byKey[s.key] ?? '');
+  }
+  // 决策票据：节存在才给 parsed.decisions（{tickets, frontier, issues}），无节时键整体不存在
+  if ('decisions' in byKey) out.decisions = parseDecisions(byKey.decisions);
   out.steps = steps;
   out.extras = secs.filter((s) => !s.key).map((s) => ({ name: s.name, text: s.text }));
   return out;
@@ -249,7 +257,7 @@ export function resolvePlan(ref) {
   throw new Error(`没找到计划：${r}。可用 steward_plan list 看现有计划`);
 }
 
-function render({ title, goal, gap, scope, steps, parallel, modes, accept, risks, status, created, progress, isNew, extras }) {
+function render({ title, goal, gap, scope, decisionsText, steps, parallel, modes, accept, risks, status, created, progress, isNew, extras }) {
   const now = stampDate();
   const L = [
     '---',
@@ -278,6 +286,14 @@ function render({ title, goal, gap, scope, steps, parallel, modes, accept, risks
     progress: () => (progress ? [progress] : isNew ? [`- ${stampTime()} 建立计划`] : ['- （暂无）']),
   };
   for (const s of SECTIONS) {
+    if (s.special) {
+      // 决策票据：原文直出（merge 不传时保留旧原文）；空节只留标题 + 一个空行，不写「（待补）」
+      if (decisionsText === undefined) continue;
+      L.push(`## ${s.name}`, '');
+      const body = String(decisionsText).trim();
+      if (body) L.push(body, '');
+      continue;
+    }
     const body = bodies[s.key]();
     if (body === null) continue;
     L.push(`## ${s.name}`, '', ...(Array.isArray(body) ? body : [body]), '');
@@ -362,7 +378,27 @@ function mergeSteps(oldSteps, incoming, mode) {
   return { steps: out, stat };
 }
 
-export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, modes, accept, risks, status, mode, progress }) {
+function decisionSummary(rawText) {
+  const d = parseDecisions(rawText);
+  const counts = decisionCounts(d.tickets);
+  return {
+    open: counts.open,
+    claimed: counts.claimed,
+    resolved: counts.resolved,
+    outOfScope: counts.outOfScope,
+    invalid: counts.invalid,
+    issues: d.issues,
+  };
+}
+
+function decErr(code, tickets, message) {
+  const e = new Error(message);
+  e.code = code;
+  if (tickets) e.tickets = tickets;
+  return e;
+}
+
+export function savePlan({ workspace, title, goal, gap, scope, decisions, steps, parallel, modes, accept, risks, status, mode, progress }) {
   // 2026-11-04：save 曾经静默丢掉 progress（复盘 A4），改成直接报错指回 update
   if (progress !== undefined && String(progress).trim()) {
     throw new Error('save 不写进度记录：请改用 steward_plan action=update（save 只写节与步骤）');
@@ -376,6 +412,9 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
   const incomingSteps = normalizeSteps(steps);
 
   if (!exists(file)) {
+    let newDecisionsText = decisions === undefined ? undefined : renderDecisions(parseDecisions(decisions).tickets);
+    // append + 空串且无旧节 = 不新增节（SPEC §6.1）
+    if (md === 'append' && !newDecisionsText) newDecisionsText = undefined;
     writeAtomic(
       file,
       render({
@@ -383,6 +422,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
         goal,
         gap,
         scope,
+        decisionsText: newDecisionsText,
         steps: incomingSteps,
         parallel,
         modes,
@@ -397,7 +437,8 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
       created: true,
       mode: md,
       steps: { before: 0, matched: 0, added: incomingSteps.length, toggled: 0, kept: 0, after: incomingSteps.length },
-      sections: { replaced: [], appended: [], keptExtras: [], droppedExtras: [] },
+      sections: { replaced: newDecisionsText === undefined ? [] : ['decisions'], appended: [], keptExtras: [], droppedExtras: [] },
+      decisions: newDecisionsText === undefined ? undefined : decisionSummary(newDecisionsText),
     };
   }
 
@@ -442,11 +483,43 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
   const keptExtras = md === 'replace' ? [] : old.extras;
   const droppedExtras = md === 'replace' ? old.extras.map((s) => s.name) : [];
 
+  // 决策票据：六种形态（SPEC §6.1）。传 = 参数出现（含 ''），不传 = undefined
+  const oldByKey = sectionsByKey(splitFrontmatter(raw).body);
+  const oldDecisionsRaw = 'decisions' in oldByKey ? oldByKey.decisions : undefined;
+  const normDecisions = decisions === undefined ? undefined : renderDecisions(parseDecisions(decisions).tickets);
+  let nextDecisions;
+  if (md === 'replace') {
+    nextDecisions = decisions === undefined ? undefined : normDecisions;
+    if (decisions !== undefined) replaced.push('decisions');
+  } else if (md === 'append') {
+    if (decisions === undefined) {
+      nextDecisions = oldDecisionsRaw;
+    } else {
+      const oldIds = new Set(parseDecisions(oldDecisionsRaw ?? '').tickets.map((t) => t.id));
+      const clash = [...new Set(parseDecisions(normDecisions).tickets.map((t) => t.id).filter((id) => oldIds.has(id)))];
+      if (clash.length) throw decErr('DEC_DUP_ID', clash, `DEC_DUP_ID 追加的票 ID 与旧节冲突：${clash.join(', ')}（文件未写）`);
+      if (oldDecisionsRaw === undefined) {
+        // 无旧节：等价 merge + 传；'' 不新建节
+        nextDecisions = normDecisions ? normDecisions : undefined;
+        if (nextDecisions !== undefined) replaced.push('decisions');
+      } else if (normDecisions) {
+        nextDecisions = `${oldDecisionsRaw.replace(/\s+$/, '')}\n\n${normDecisions}`;
+        appended.push('decisions');
+      } else {
+        nextDecisions = oldDecisionsRaw;
+      }
+    }
+  } else {
+    nextDecisions = decisions === undefined ? oldDecisionsRaw : normDecisions;
+    if (decisions !== undefined) replaced.push('decisions');
+  }
+
   writeAtomic(
     file,
     render({
       title,
       ...nextByKey,
+      decisionsText: nextDecisions,
       steps: nextSteps,
       status: status ?? old.status,
       created: old.meta.created,
@@ -462,6 +535,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
     mode: md,
     steps: stepStat,
     sections: { replaced, appended, keptExtras: keptExtras.map((s) => s.name), droppedExtras },
+    decisions: nextDecisions === undefined ? undefined : decisionSummary(nextDecisions),
   };
 }
 
@@ -599,8 +673,82 @@ export function auditPlanText(text) {
   if (steps.length && done === steps.length && status === 'active') add('warn', '步骤已全勾但 status 仍是 active（该 update 收尾）');
   if (done < steps.length && status === 'done') add('warn', `status=done 但只完成 ${done}/${steps.length} 步`);
 
+  // 决策票据：节存在才审计；DEC_PENDING 是 check 视图的合成 warn（不进 parseDecisions）
+  let decisionsInfo;
+  if ('decisions' in byKey) {
+    const d = parseDecisions(byKey.decisions);
+    for (const i of d.issues) issues.push(i);
+    const counts = decisionCounts(d.tickets);
+    const pendingIds = firstTickets(d.tickets)
+      .filter((t) => PENDING_STATUSES.includes(t.status))
+      .map((t) => t.id);
+    if (pendingIds.length) {
+      issues.push({
+        level: 'warn',
+        code: 'DEC_PENDING',
+        ticket: null,
+        msg: `仍有 ${pendingIds.length} 张未决票：${pendingIds.join(', ')}${d.frontier.length ? `；前沿：${d.frontier.join(', ')}` : '；前沿：无'}`,
+      });
+    }
+    decisionsInfo = { ...counts, frontier: d.frontier, issues: d.issues };
+  }
+
   const fails = issues.filter((i) => i.level === 'fail').length;
-  return { ok: fails === 0, issues, steps: steps.length, done, status };
+  return { ok: fails === 0, issues, steps: steps.length, done, status, decisions: decisionsInfo };
+}
+
+/**
+ * 关闭闸门（SPEC §6.2）：判据只有一个，三个关闭入口共用。
+ * @param {string} finalText 即将落盘的完整计划文本
+ * @param {{oldText?: string|null}} [opts] oldText = 旧文件「决策票据」节正文（不含标题；无该节 = null）
+ * 抛出的 Error 固定字段：code / message（含 code 与票 ID）/ issues（全部 fail）/ tickets（仅 DEC_PENDING）
+ */
+export function assertDecisionsClosable(finalText, { oldText = null } = {}) {
+  const src = String(finalText ?? '');
+  const byKey = sectionsByKey(splitFrontmatter(src).body);
+  const final = parseDecisions('decisions' in byKey ? byKey.decisions : '');
+  const fails = final.issues.filter((i) => i.level === 'fail');
+  const gone = [];
+
+  if (oldText !== null) {
+    const old = parseDecisions(oldText);
+    const finalIds = new Set(final.tickets.map((t) => t.id));
+    const seen = new Set();
+    for (const t of old.tickets) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      if (PENDING_STATUSES.includes(t.status) && !finalIds.has(t.id)) gone.push(t.id);
+    }
+    // 旧节里 fail 所属票块在最终全文消失（整节删 / 清空 / 单块删）→ 旧 fail 原样计入
+    const oldFailByTicket = new Map();
+    for (const i of old.issues) {
+      if (i.level !== 'fail' || !i.ticket) continue;
+      if (!oldFailByTicket.has(i.ticket)) oldFailByTicket.set(i.ticket, []);
+      oldFailByTicket.get(i.ticket).push(i);
+    }
+    for (const [id, list] of oldFailByTicket) if (!finalIds.has(id)) fails.push(...list);
+  }
+
+  if (fails.length) {
+    const rank = (c) => {
+      const i = DECISION_CODE_ORDER.indexOf(c);
+      return i < 0 ? 99 : i;
+    };
+    const sorted = [...fails].sort((a, b) => rank(a.code) - rank(b.code));
+    const code = sorted[0].code;
+    const ids = [...new Set(fails.map((i) => i.ticket).filter(Boolean))];
+    const err = decErr(code, undefined, `${code} 票据校验未通过${ids.length ? `：${ids.join(', ')}` : ''}`);
+    err.issues = fails;
+    throw err;
+  }
+
+  const finalPending = [...new Set(final.tickets.filter((t) => PENDING_STATUSES.includes(t.status)).map((t) => t.id))];
+  const all = [...new Set([...gone, ...finalPending])];
+  if (all.length) {
+    const err = decErr('DEC_PENDING', all, `DEC_PENDING 仍有未决票：${all.join(', ')}`);
+    err.issues = [];
+    throw err;
+  }
 }
 
 export function auditPlan(ref) {
@@ -656,3 +804,6 @@ export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = 
   writeAtomic(file, text);
   return { file, created: true, exists: false };
 }
+
+// 决策票据纯函数（SPEC §11：dev 夹具直接从 lib/plan.js import）
+export { parseDecisions, renderDecisions };
