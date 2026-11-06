@@ -9,6 +9,7 @@
  *   ## 目标
  *   ## 范围
  *   ## 步骤            - [ ] / - [x]
+ *   ## 并行 / 工作树    （按需）
  *   ## 验收
  *   ## 风险 / 回滚
  *   ## 进度记录        - DATE 内容
@@ -63,6 +64,9 @@ const NAME_TO_KEY = {
   差距对照: 'gap',
   范围: 'scope',
   步骤: 'steps',
+  '并行 / 工作树': 'parallel',
+  '并行/工作树': 'parallel',
+  并行与工作树: 'parallel',
   执行档位: 'modes',
   验收: 'accept',
   '风险 / 回滚': 'risks',
@@ -124,6 +128,7 @@ export function parsePlan(text) {
     gap: opt('gap'),
     scope: pick('scope'),
     accept: pick('accept'),
+    parallel: opt('parallel'),
     modes: opt('modes'),
     risks: pick('risks'),
     steps,
@@ -182,7 +187,7 @@ export function resolvePlan(ref) {
   throw new Error(`没找到计划：${r}。可用 steward_plan list 看现有计划`);
 }
 
-function render({ title, goal, gap, scope, steps, modes, accept, risks, status, created, progress, isNew, extras }) {
+function render({ title, goal, gap, scope, steps, parallel, modes, accept, risks, status, created, progress, isNew, extras }) {
   const now = stampDate();
   const L = [
     '---',
@@ -213,6 +218,7 @@ function render({ title, goal, gap, scope, steps, modes, accept, risks, status, 
       : ['- [ ] 1. （待补）']),
     '',
   );
+  if (parallel !== undefined) L.push('## 并行 / 工作树', '', parallel ? String(parallel).trim() : '（待补）', '');
   if (modes !== undefined) L.push('## 执行档位', '', modes ? String(modes).trim() : '（待补）', '');
   L.push(
     '## 验收',
@@ -308,7 +314,7 @@ function mergeSteps(oldSteps, incoming, mode) {
   return { steps: out, stat };
 }
 
-export function savePlan({ workspace, title, goal, gap, scope, steps, modes, accept, risks, status, mode, progress }) {
+export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, modes, accept, risks, status, mode, progress }) {
   // 2026-11-04：save 曾经静默丢掉 progress（复盘 A4），改成直接报错指回 update
   if (progress !== undefined && String(progress).trim()) {
     throw new Error('save 不写进度记录：请改用 steward_plan action=update（save 只写节与步骤）');
@@ -330,6 +336,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, modes, acc
         gap,
         scope,
         steps: md === 'replace' ? incomingSteps : incomingSteps,
+        parallel,
         modes,
         accept,
         risks,
@@ -353,6 +360,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, modes, acc
     goal: old.goal,
     gap: old.gap,
     scope: old.scope,
+    parallel: old.parallel,
     modes: old.modes,
     accept: old.accept,
     risks: old.risks,
@@ -386,6 +394,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, modes, acc
   const nextGoal = resolve('goal', goal, true);
   const nextGap = resolve('gap', gap, false);
   const nextScope = resolve('scope', scope, true);
+  const nextParallel = resolve('parallel', parallel, false);
   const nextModes = resolve('modes', modes, false);
   const nextAccept = resolve('accept', accept, true);
   const nextRisks = resolve('risks', risks, true);
@@ -405,6 +414,7 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, modes, acc
       gap: nextGap,
       scope: nextScope,
       steps: nextSteps,
+      parallel: nextParallel,
       modes: nextModes,
       accept: nextAccept,
       risks: nextRisks,
@@ -532,6 +542,21 @@ export function auditPlanText(text) {
   }
 
   const status = (src.match(/^status:\s*(\S+)/m) ?? ['', 'active'])[1];
+  // 并行 / 工作树（按需节）：只对进行中的计划提示，避免给已收尾计划翻旧账（只 warn，不影响 ok）
+  const hasParallel = heads.some((h) => /并行\s*[/与·]\s*工作树|并行与工作树/.test(h));
+  if (status === 'active') {
+    if (hasParallel) {
+      const block = (src.match(/##[^\n]*并行[^\n]*工作树[^\n]*\r?\n([\s\S]*?)(?=\n##\s|$)/) ?? ['', ''])[1].trim();
+      if (!block || block === '（待补）') {
+        add('warn', '并行 / 工作树节没内容（写清哪些步骤互不依赖、开哪棵树、怎么合并回主树）');
+      } else if (!/工作树|worktree|主树|树名/i.test(block)) {
+        add('warn', '并行 / 工作树节没写树归属（主树 / 树名 / 基线）');
+      }
+    } else {
+      const parallelSteps = steps.filter((s) => /\[并行\]\s*$/.test(s.text));
+      if (parallelSteps.length) add('warn', `${parallelSteps.length} 条步骤标了 [并行] 但缺「并行 / 工作树」节（写清开哪棵、怎么合并回主树）`);
+    }
+  }
   const done = steps.filter((s) => s.done).length;
   if (steps.length && done === steps.length && status === 'active') add('warn', '步骤已全勾但 status 仍是 active（该 update 收尾）');
   if (done < steps.length && status === 'done') add('warn', `status=done 但只完成 ${done}/${steps.length} 步`);

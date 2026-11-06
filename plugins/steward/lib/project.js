@@ -13,7 +13,7 @@ import { getPlan, updatePlan, resolvePlan } from './plan.js';
 
 const REG = path.join(DSH, 'projects.json');
 
-/** 写前留一份备份：`~/.dsh/steward/backups/<tag>-<文件名>-<时间戳>.bak`。 */
+/** 写前留一份备份：`~/.dsh/koujing/backups/<tag>-<文件名>-<时间戳>.bak`。 */
 function backupFile(file, tag) {
   try {
     if (!exists(file)) return null;
@@ -213,13 +213,16 @@ function listBlock(items, fmt = (x) => x) {
   return items?.length ? items.map((x) => bullet(fmt(x))) : ['（未填）'];
 }
 
-/** 渲染 STATUS 正文（当前态）。 */
-export function renderStatus(p, { closed = false, closedAt = '' } = {}) {
+/** 渲染 STATUS 正文（当前态）。handoffLabel 给实际冻结件名（同日 -2 或跨目录时必须由调用方传）。 */
+export function renderStatus(p, { closed = false, closedAt = '', handoffLabel = '' } = {}) {
   const L = [];
   L.push(`# ${p.title} · 当前态（STATUS）`);
   L.push('');
   L.push(`> 最后更新：${p.updated || stamp()}　·　由 \`steward_handoff status\` 从项目档案 + 计划 + 改动账本 + 日志生成`);
-  if (closed) L.push(`> **已收尾 ${closedAt}**：本文件不再更新，冻结快照见同目录 \`HANDOFF-${String(closedAt).slice(0, 10)}.md\``);
+  if (closed) {
+    const label = handoffLabel || `HANDOFF-${String(closedAt).slice(0, 10)}.md`;
+    L.push(`> **已收尾 ${closedAt}**：本文件不再更新，冻结快照见 \`${label}\``);
+  }
   L.push('');
   L.push('## 一、真源与生成物');
   L.push('');
@@ -316,11 +319,20 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
 
   const head = [`# ${p.title} · 收尾交接（${day}）`, '', `> 由 \`steward_handoff close\` 在 ${at} 生成；冻结快照，不再修改。`];
   if (note) head.push('', `> 收尾说明：${note}`);
-  const body = renderStatus(p, { closed: true, closedAt: at });
+  const fresh = { ...p, updated: at };
+  const body = renderStatus(fresh, { closed: true, closedAt: at, handoffLabel });
   fs.writeFileSync(handoff, [...head, '', body].join('\n'), 'utf8');
 
-  // STATUS 顶部标已收尾
-  if (exists(p.statusFile)) {
+  // STATUS 是常驻当前态，收尾后必须存在并带「已收尾」指针。
+  // 2026-11-06 修：原来只在 exists(statusFile) 时才标记，文件缺失就静默跳过，
+  // 却照旧写快照 / 账本并回报「顶部已标已收尾」——下一个会话读到的是不存在的当前态。
+  assertStatusTarget(p.statusFile, p.key);
+  let statusCreated = false;
+  if (!exists(p.statusFile)) {
+    ensureDir(path.dirname(p.statusFile));
+    fs.writeFileSync(p.statusFile, body, 'utf8');
+    statusCreated = true;
+  } else {
     const old = readText(p.statusFile);
     if (!/已收尾/.test(old.split('\n').slice(0, 8).join('\n'))) {
       const lines = old.split(/\r?\n/);
@@ -348,5 +360,5 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   });
 
   updateProject(key, { status: 'done', closedAt: at, updated: at });
-  return { handoff, seq, statusFile: p.statusFile, plan, change };
+  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change };
 }

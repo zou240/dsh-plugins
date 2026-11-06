@@ -43,7 +43,7 @@ export function parseTable(text, heading) {
 
 const DOMAINS_FILE = path.join(DSH, 'koujing', 'domains.json');
 
-// 主题线默认值保持中性；个人 / 团队的主题线可在 ~/.dsh/steward/domains.json 的 threads 里覆盖。
+// 主题线默认值保持中性；个人 / 团队的主题线可在 ~/.dsh/koujing/domains.json 的 threads 里覆盖。
 const DEFAULT_THREADS = [
   { id: 'docs', name: '文档与规则', re: /文档|手册|索引|规则|lint|门禁/i },
   { id: 'tools', name: '工具与插件', re: /插件|工具|profile|bundle|脚本|cli/i },
@@ -196,7 +196,7 @@ export function buildTimeline() {
       title: `规则台账 · ${where} 登记 ${rows.length} 条${stale ? `（${stale} 条失效）` : ''}`,
       detail: clip(rows.map((r) => r.title).join(' / '), 300),
       why: '规定总表；逐条查用 steward_ledger，细则正文在各自的 AGENTS.md',
-      evidence: `${file} · 台账 ~/.dsh/steward/ledger.json`,
+      evidence: `${file} · 台账 ~/.dsh/koujing/ledger.json`,
       rollback: '',
       source: '规则台账',
     });

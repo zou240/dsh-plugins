@@ -315,7 +315,7 @@ const PARAMS = {
       action: {
         type: 'string',
         enum: ['save', 'list', 'get', 'update', 'check', 'scaffold'],
-        description: 'save=建立或增量更新计划；list=列计划；get=读全文；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/状态矛盾）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）',
+        description: 'save=建立或增量更新计划；list=列计划；get=读全文；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）',
       },
       mode: {
         type: 'string',
@@ -337,6 +337,11 @@ const PARAMS = {
         items: { type: 'string' },
         description:
           'save：按顺序的步骤；已完成的写 "[x] 内容"。merge/append 下只传要新增或改动的步骤即可，没传的旧步骤与勾选状态保留；要删步骤才用 mode=replace',
+      },
+      parallel: {
+        type: 'string',
+        description:
+          'save（按需）：并行 / 工作树——项目里有互不依赖的步骤时写：哪些步骤可并行、开哪棵树（树名 + 基线分支/commit）、合并回主树的顺序与门禁、哪些同文件步骤不并行；步骤行尾标了 [并行] 的，check 会要求这一节存在。单文件或纯串行项目不要加这一节',
       },
       modes: {
         type: 'string',
@@ -418,7 +423,7 @@ const TOOLS = [
   {
     name: 'steward_plan',
     description:
-      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。',
+      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。',
     parameters: PARAMS.plan,
     isConcurrencySafe: () => false,
     run: async (args, exec, ctx) => {
@@ -481,6 +486,7 @@ const TOOLS = [
           gap: args?.gap,
           scope: args?.scope,
           steps: args?.steps,
+          parallel: args?.parallel,
           modes: args?.modes,
           accept: args?.accept,
           risks: args?.risks,
@@ -692,7 +698,13 @@ const TOOLS = [
     run: async (args) => {
       if (args?.action === 'close') {
         const r = closeProject(args?.key, { note: args?.note ?? '', planDone: args?.planDone !== false });
-        const L = [`已收尾：${r.handoff}（今日第 ${r.seq} 份冻结件）`, `STATUS：${r.statusFile}（顶部已标「已收尾」）`, `账本：${r.change.file}:${r.change.lineNo}`];
+        const L = [
+          `已收尾：${r.handoff}（今日第 ${r.seq} 份冻结件）`,
+          r.statusCreated
+            ? `STATUS：${r.statusFile}（原本不存在，已按当前态生成并标「已收尾」）`
+            : `STATUS：${r.statusFile}（顶部已标「已收尾」）`,
+          `账本：${r.change.file}:${r.change.lineNo}`,
+        ];
         if (r.seq > 1) L.push(`说明：同日已是第 ${r.seq} 次收尾，前 ${r.seq - 1} 份按 P0-3 保留不动`);
         if (r.plan) L.push(r.plan.error ? `计划未改：${r.plan.error}` : '计划已标 done');
         return { text: L.join('\n'), result: r };
@@ -839,36 +851,39 @@ export function apply(ctx) {
     );
   }
 
-  // 旧工具名兼容（2026-11-03 更名 koujing_* → steward_*）：转发到新实现，每个会话每个旧名提示一次。
-  // 旧名只有在 grep 旧名 0 命中并跑满一周后才删（见 PLAN-项目统管修复与更名 第 17 步）。
-  const deprecated = new Set();
-  for (const def of TOOLS) {
-    const oldName = def.name.replace(/^steward_/, 'koujing_');
-    if (oldName === def.name) continue;
-    ctx.effect(() =>
-      ctx.tools.register({
-        name: oldName,
-        description: `【旧名别名】已更名为 ${def.name}，旧名只作兼容（下一版本移除）。${def.description}`,
-        parameters: def.parameters,
-        output: OUTPUT,
-        isConcurrencySafe: def.isConcurrencySafe,
-        execute: async (args, exec) => {
-          const first = !deprecated.has(oldName);
-          deprecated.add(oldName);
-          let r;
-          try {
-            r = await def.run(args ?? {}, exec, ctx);
-          } catch (err) {
-            r = { text: `失败：${err?.message ?? err}` };
-          }
-          if (first) {
-            const note = `\n\n⚠ 工具已更名：${oldName} → ${def.name}（旧名仅作兼容，本次会话只提示一次）`;
-            r = { ...r, text: typeof r?.text === 'string' ? r.text + note : note };
-          }
-          return r;
-        },
-      }),
-    );
+  // 旧工具名兼容（2026-11-03 更名 koujing_* → steward_*）已下线（2026-11-06）：
+  // 11 个别名工具 = 9,866 字符 ≈ 3.2K token，每请求都随工具表进上下文，且与 steward_* 同名同参、干扰选工具。
+  // 代码保留，只在显式 STEWARD_LEGACY_ALIASES=1 时注册；要临时兼容旧会话就设这个环境变量再重启。
+  if (process.env.STEWARD_LEGACY_ALIASES === '1') {
+    const deprecated = new Set();
+    for (const def of TOOLS) {
+      const oldName = def.name.replace(/^steward_/, 'koujing_');
+      if (oldName === def.name) continue;
+      ctx.effect(() =>
+        ctx.tools.register({
+          name: oldName,
+          description: `【旧名别名】已更名为 ${def.name}，旧名只作兼容（默认不注册，设 STEWARD_LEGACY_ALIASES=1 才开）。${def.description}`,
+          parameters: def.parameters,
+          output: OUTPUT,
+          isConcurrencySafe: def.isConcurrencySafe,
+          execute: async (args, exec) => {
+            const first = !deprecated.has(oldName);
+            deprecated.add(oldName);
+            let r;
+            try {
+              r = await def.run(args ?? {}, exec, ctx);
+            } catch (err) {
+              r = { text: `失败：${err?.message ?? err}` };
+            }
+            if (first) {
+              const note = `\n\n⚠ 工具已更名：${oldName} → ${def.name}（旧名仅作兼容，本次会话只提示一次）`;
+              r = { ...r, text: typeof r?.text === 'string' ? r.text + note : note };
+            }
+            return r;
+          },
+        }),
+      );
+    }
   }
 
   // 提示词小节：极简 ctx（tool-audit / 只测工具的宿主）没有 systemPrompt，跳过而不是抛错。

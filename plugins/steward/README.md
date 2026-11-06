@@ -27,15 +27,15 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 装完新开一个会话，说一句「以后回答我时先给结论」，模型会先出卡、把待确认的问题一次问完，再把这条写进 `~/.dsh/AGENTS.md`。
 
-可选：把「某类说法」映射到你的某个工作区，让落点建议更准——把 `domains.example.json` 复制到 `~/.dsh/steward/domains.json` 后按需改。不配置也能用：说法里直接点名了某个已登记工作区就落到它，否则按用户级。
+可选：把「某类说法」映射到你的某个工作区，让落点建议更准——把 `domains.example.json` 复制到 `~/.dsh/koujing/domains.json` 后按需改。不配置也能用：说法里直接点名了某个已登记工作区就落到它，否则按用户级。
 
-## 十个工具
+## 十一个工具
 
 | 工具 | 做什么 / 什么时候用 |
 |---|---|
 | `steward_card` | 把一句话的要求拆成必答维度，给出该写进哪个 `AGENTS.md` 的哪一节，并列出命中的现有规则、疑似冲突和这类事最容易漏的点。会话开头先用它，**不动文件、不下结论**。 |
 | `steward_commit` | 把确认过的一条规则写进对应 `AGENTS.md`：先查重、写前备份、记台账，可选跑你自己的 `docs-lint` 门禁，最后回报文件与行号。 |
-| `steward_plan` | 项目计划：`save` 写 `PLAN-*.md`（`merge`/`append`/`replace` 三种更新语义）、`get`/`list` 读、`update` 勾步骤记进度；**`check`** 检查六个必填节 / 档位 / 派单标记 / 交付类「文档用法矩阵」/ 状态与勾选矛盾；**`scaffold`** 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 `[档位] [派单]` 占位）。 |
+| `steward_plan` | 项目计划：`save` 写 `PLAN-*.md`（`merge`/`append`/`replace` 三种更新语义）、`get`/`list` 读、`update` 勾步骤记进度；**`check`** 检查六个必填节 / 档位 / 派单标记 / 交付类「文档用法矩阵」/ 并行节 / 状态与勾选矛盾；**`scaffold`** 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 `[档位] [派单]` 占位）。 |
 | `steward_search` | 跨所有 `AGENTS.md`、插件台账与 `PLAN-*.md` 检索原文，返回 `path:line`；回答「我之前是不是说过」不靠记忆。 |
 | `steward_ledger` | 列出台账登记过的每条规则，并标注它在文件里还能不能找到（找不到 = 被手改或删了）。 |
 | `steward_change` | **改动登记**：把一次改动写成 `~/.dsh/CHANGES.md` 一行（日期 / 对象 / 改了什么 / 证据 / 回滚 / 指针），可选同时把某项目 `STATUS.md` 的「最后更新」戳成现在；`action=list` 读最近几条。 |
@@ -43,6 +43,8 @@ dsh plugin add ./dsh-plugins/plugins/steward
 | `steward_project` | **项目档案**：登记真源 / 生成物 / 冻结件 / 入口 / 口径 / 待办 / 门禁 / 计划（`~/.dsh/projects.json`），`show` 直接返回渲染好的当前态；所有项目文书从它派生。 |
 | `steward_handoff` | **交接与收尾**：`status` 按档案 + 计划 + 账本 + 日志重写 `STATUS.md`（一个项目只留一份当前态）；`close` 冻结 `HANDOFF-<日期>.md`、STATUS 标「已收尾」、计划标 done、账本记一行。 |
 | `steward_log` | **过程日志**：`~/.dsh/logs/<项目>.md`，`add` 追加运行输出 / 报错原文 / 决策理由，`list` 读最近几条；`steward_timeline` 会并入。 |
+
+> **旧名 `koujing_*` 别名已下线（0.2.5，2026-11-06）**：11 个别名工具与 `steward_*` 同名同参，共 9,866 字符 ≈ 3.2K token，每请求都随工具表进上下文，还会干扰选工具。代码保留在 `index.js`，默认不注册；要兼容旧会话就设环境变量 `STEWARD_LEGACY_ALIASES=1` 再重启。数据路径仍是 `~/.dsh/koujing/`（目录名不改）。
 
 ## 改动账本（为什么多这一层）
 
@@ -64,11 +66,11 @@ dsh plugin add ./dsh-plugins/plugins/steward
 | 改动 | `~/.dsh/CHANGES.md`（日期｜类型｜对象｜改了什么｜证据｜回滚｜指针） | `steward_change` → 门禁 + 时间线 |
 | 过程日志 | `~/.dsh/logs/<项目>.md` | `steward_log` → 时间线 |
 | 时间线 | `<工作区>/TIMELINE.md` | `steward_timeline publish` |
-| 规则 | `AGENTS.md` + `~/.dsh/steward/ledger.json` | `steward_commit` |
+| 规则 | `AGENTS.md` + `~/.dsh/koujing/ledger.json` | `steward_commit` |
 
 ### 写路径护栏（2026-11-03 审计后补）
 
-- **拒写非 STATUS**：`handoff status` 只覆盖自己生成的文件（首行含「· 当前态（STATUS）」或生成说明行）；`statusFile` 指向手写文档（RUNBOOK / 使用说明 / PLAN / 旧 HANDOFF）时**直接拒绝并报错**，让人把档案改到 `<source>\STATUS.md`。写前整份备份到 `~/.dsh/steward/backups/`。
+- **拒写非 STATUS**：`handoff status` 只覆盖自己生成的文件（首行含「· 当前态（STATUS）」或生成说明行）；`statusFile` 指向手写文档（RUNBOOK / 使用说明 / PLAN / 旧 HANDOFF）时**直接拒绝并报错**，让人把档案改到 `<source>\STATUS.md`。写前整份备份到 `~/.dsh/koujing/backups/`。
 - **`projects.json` 原子写**：解析失败一律抛错，绝不「当成空表再写回去」；写盘走 `tmp + rename`，写前备份，`list` 报红而不是静默吞掉。
 - **同日 `close` 不再覆盖**：`HANDOFF-<日期>.md` 已存在就写 `-2`、`-3`，冻结件只增不改。
 - **收尾后拒写**：档案有 `closedAt` 时 `status` 拒绝重写（要改先 `update status=active` 复开）。
@@ -88,15 +90,29 @@ dsh plugin add ./dsh-plugins/plugins/steward
 | 东西 | 路径 |
 |---|---|
 | 规则正文 | `~/.dsh/AGENTS.md`（用户级）或 `<工作区>/AGENTS.md`（工作区级） |
-| 台账索引 | `~/.dsh/steward/ledger.json`（只记来源、落点、时间） |
+| 台账索引 | `~/.dsh/koujing/ledger.json`（只记来源、落点、时间） |
 | 改动账本 | `~/.dsh/CHANGES.md`（跨会话的「改了什么」，`steward_change` 写、`steward_timeline` 读） |
-| 写前备份 | `~/.dsh/steward/backups/` |
-| 落点路由（可选） | `~/.dsh/steward/domains.json` |
+| 写前备份 | `~/.dsh/koujing/backups/` |
+| 落点路由（可选） | `~/.dsh/koujing/domains.json` |
 | 项目计划 / 时间线 | `<工作区>/PLAN-*.md`、`<工作区>/TIMELINE.md` |
 
 插件自身不建数据库。
 
+> 目录名 `koujing/` 沿用插件更名前的旧名（代码里硬编码，改它等于迁移用户数据），不是笔误；整体换根用环境变量 `KOUJING_HOME`。
+
 > **`STATUS.md` / `HANDOFF-*.md` 只留本地，不随发布。** 这两份是项目内部当前态与收尾快照，内容含真源目录、profile 链接等**本机绝对路径**；发布仓库已用 `.gitignore` 的 `**/STATUS.md` 排除，`package.json` 的 `files` 白名单也不含它们。要对外分享时另出脱敏副本，别直接提交。
+
+## 按需节：差距对照 / 并行·工作树 / 执行档位
+
+六个必填节之外，计划可以按需加三节；不传就不出现在文件里，小项目不被格式拖累。
+
+| 节 | 参数 | 什么时候加 |
+|---|---|---|
+| 差距对照 | `gap` | 对标、补齐、选型、移植类项目：逐项写「它有什么 / 我们现状 / 判定 / 落点」 |
+| 并行 / 工作树 | `parallel` | 项目里有互不依赖的步骤：写清哪些步骤可并行、开哪棵树（树名 + 基线分支/commit）、合并回主树的顺序与门禁、哪些同文件步骤不并行。步骤行尾标 `[并行]` 的，`check` 会要求这一节存在 |
+| 执行档位 | `modes` | 跨 5 步以上或要切推理档：逐步骤给 High/Max 与理由、切换节奏 |
+
+`check` 对并行节**只告警不阻断**：节空、没写树归属（主树 / 树名）、或步骤标了 `[并行]` 却没有这节，各给一条 warn；已收尾（`status: done`）的计划不提示。
 
 ## 计划的三种更新模式（`save` 的 `mode`）
 
@@ -123,7 +139,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 ## 常见问题
 
-1. **会不会把我的规则改坏？** 写前备份到 `~/.dsh/steward/backups/`，只追加不重写；命中文档里已有相似条目会先提示再写。
+1. **会不会把我的规则改坏？** 写前备份到 `~/.dsh/koujing/backups/`，只追加不重写；命中文档里已有相似条目会先提示再写。
 2. **多工作区怎么决定写哪儿？** 默认按「换个工作区还成立吗」判（点名了工作区就落它，否则用户级），也可用 `workspace` 参数强制指定。
 3. **计划改一句要整篇重写吗？** 不用：`merge`（默认）只并入改动的步骤，勾选与手写小节都保留。
 4. **面板空白或 401？** 两个数据路由是同源只读接口，需要带会话令牌的页面访问；直连地址会 401，这是设计如此。

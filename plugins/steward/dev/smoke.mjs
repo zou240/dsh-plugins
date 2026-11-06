@@ -131,6 +131,16 @@ const r3 = core.commitRule({
 ok('commit 工作区', r3.status === 'written' && r3.heading === '构建与测试', `${r3.file}:${r3.lines?.[0]}`);
 ok('工作区文件含行', fs.readFileSync(path.join(WS, 'AGENTS.md'), 'utf8').includes('构建前先确认工具链版本'));
 
+// 9b 显式传带 ## 的节名：剥前缀后命中已有节，不能翻倍成 ## ##（2026-11-04 用户级 AGENTS.md 踩过）
+const r4 = core.commitRule({
+  title: '文档不加装饰（带井号）',
+  body: '文档不加装饰，先看模板再动笔。',
+  scope: 'user',
+  section: '## 文档不加装饰',
+});
+ok('section 传 ## 前缀不翻倍', r4.status === 'written' && r4.heading === '文档不加装饰', `${r4.status} → ${r4.heading}`);
+ok('产物里没有 ## ##', !/(^|\n)##\s+##\s/.test(fs.readFileSync(path.join(DSH, 'AGENTS.md'), 'utf8')));
+
 // 10 备份存在
 ok('备份已生成', Boolean(r1.backup && fs.existsSync(r1.backup)));
 
@@ -203,6 +213,87 @@ ok('12.7 replace 丢弃手写小节并报告', q3.extras.length === 0 && m3.sect
 ok('12.8 replace 不清进度记录', q3.progress.includes('第二次更新'), q3.progress.replace(/\n/g, ' | '));
 const q4 = plan.parsePlan(fs.readFileSync(pfile, 'utf8'));
 ok('12.9 replace 不传 steps 时旧步骤仍在', q4.steps.length === 4, `${q4.steps.length} 步`);
+
+// 13 并行 / 工作树按需节（2026-11-06）
+const pf = path.join(WS, 'PLAN-demo-parallel.md');
+plan.savePlan({
+  workspace: WS,
+  title: 'demo-parallel',
+  goal: '验证并行节',
+  scope: '- 做：并行节\n- 不做：改工具名',
+  steps: ['建树', '两树各改一处', '合并回主树'],
+  parallel: '- 步骤 2 可并行：树 A（base main）改 rules、树 B（base main）改渲染\n- 同文件步骤不并行\n- 合并顺序：A → B → 主树复跑门禁',
+  modes: '第 1 步 Low，第 2 步 High',
+  accept: '回归通过',
+  risks: '改坏回滚',
+});
+const ptext = fs.readFileSync(pf, 'utf8');
+const at = (s) => ptext.indexOf(s);
+ok(
+  '13.1 并行节已渲染且位置正确',
+  at('## 并行 / 工作树') > at('## 步骤') && at('## 并行 / 工作树') < at('## 执行档位'),
+  ptext.split('\n').filter((l) => l.startsWith('##')).join(' | '),
+);
+const pq1 = plan.parsePlan(ptext);
+ok('13.2 parsePlan 读回 parallel 原文', pq1.parallel.includes('树 A') && pq1.parallel.includes('合并顺序'), pq1.parallel.replace(/\n/g, ' | '));
+plan.savePlan({ workspace: WS, title: 'demo-parallel', steps: ['新步骤：补一份 runbook'] });
+ok('13.3 merge 不传 parallel 时保留', plan.parsePlan(fs.readFileSync(pf, 'utf8')).parallel.includes('树 A'));
+plan.savePlan({ workspace: WS, title: 'demo-parallel', mode: 'append', parallel: '- 第 3 步串行：合并与门禁不并行' });
+ok('13.4 append 追加到节末', plan.parsePlan(fs.readFileSync(pf, 'utf8')).parallel.includes('第 3 步串行'));
+plan.savePlan({ workspace: WS, title: 'demo-parallel', mode: 'replace', goal: '重写' });
+ok('13.5 replace 未传 parallel 时删节', !fs.readFileSync(pf, 'utf8').includes('## 并行 / 工作树'), fs.readFileSync(pf, 'utf8').split('\n').filter((l) => l.startsWith('##')).join(' | '));
+
+// 13b check 的三条 warn（合成样本，不碰真实工作区）
+const mkPlan = (extra = '', scopeLine = '- 做：x') =>
+  [
+    '---',
+    'title: t',
+    'status: active',
+    'created: 2026-11-06',
+    '---',
+    '',
+    '# t',
+    '',
+    '## 目标',
+    '',
+    'x',
+    '',
+    '## 范围',
+    '',
+    scopeLine,
+    '',
+    '## 步骤',
+    '',
+    '- [ ] 1. a [High] [自做]',
+    '- [ ] 2. b [High] [自做]',
+    '- [ ] 3. c [High] [自做]',
+    '',
+    extra,
+    '## 验收',
+    '',
+    'y',
+    '',
+    '## 风险 / 回滚',
+    '',
+    'z',
+    '',
+    '## 进度记录',
+    '',
+    '- 2026-11-06 建立',
+    '',
+  ].join('\n');
+const aNone = plan.auditPlanText(mkPlan());
+ok('13.6 无并行节且范围不提树 → 不告警', !aNone.issues.some((i) => i.msg.includes('并行')), JSON.stringify(aNone.issues));
+const aEmpty = plan.auditPlanText(mkPlan('## 并行 / 工作树\n\n（待补）\n\n'));
+ok('13.7 空并行节 → warn', aEmpty.issues.some((i) => i.level === 'warn' && i.msg.includes('没内容')), JSON.stringify(aEmpty.issues));
+const aNoTree = plan.auditPlanText(mkPlan('## 并行 / 工作树\n\n- 步骤 2、3 可并行\n\n'));
+ok('13.8 有节没写树 → warn', aNoTree.issues.some((i) => i.level === 'warn' && i.msg.includes('没写树归属')), JSON.stringify(aNoTree.issues));
+const aMarked = plan.auditPlanText(mkPlan().replace('- [ ] 2. b [High] [自做]', '- [ ] 2. b [High] [自做] [并行]'));
+ok('13.9 步骤标 [并行] 缺节 → warn', aMarked.issues.some((i) => i.level === 'warn' && i.msg.includes('[并行]')), JSON.stringify(aMarked.issues));
+const aInline = plan.auditPlanText(mkPlan().replace('- [ ] 3. c [High] [自做]', '- [ ] 3. c 正文提到 [并行] 的含义 [High] [自做]'));
+ok('13.9b 正文提到 [并行] 但不在行尾 → 不告警', !aInline.issues.some((i) => i.msg.includes('[并行]')), JSON.stringify(aInline.issues));
+const aFull = plan.auditPlanText(mkPlan('## 并行 / 工作树\n\n- 树 A（base main）改 rules；树 B 改渲染；合并回主树复跑门禁\n\n'));
+ok('13.10 写全了不告警且 ok 不变', !aFull.issues.some((i) => i.msg.includes('并行')) && aFull.ok === true, JSON.stringify(aFull.issues));
 
 console.log(out.join('\n'));
 console.log(`\n台账文件：${core.ledgerPath()}`);

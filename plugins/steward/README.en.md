@@ -27,7 +27,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 Start a new session and say "always give me the conclusion first". The model shows a card, asks every open question in one round, then writes the rule into `~/.dsh/AGENTS.md`.
 
-Optional: map phrases to one of your workspaces so placement suggestions get sharper — copy `domains.example.json` to `~/.dsh/steward/domains.json` and edit. Without it the plugin works too: if the statement names a registered workspace it routes there, otherwise it falls back to user level.
+Optional: map phrases to one of your workspaces so placement suggestions get sharper — copy `domains.example.json` to `~/.dsh/koujing/domains.json` and edit. Without it the plugin works too: if the statement names a registered workspace it routes there, otherwise it falls back to user level.
 
 ## The six tools
 
@@ -35,7 +35,7 @@ Optional: map phrases to one of your workspaces so placement suggestions get sha
 |---|---|
 | `steward_card` | Splits a one-line requirement into the questions that must be settled, suggests which `AGENTS.md` and which section it belongs to, and lists matching existing rules, suspected conflicts and the blind spot people usually miss. Use it first: **no file edits, no conclusions**. |
 | `steward_commit` | Writes a confirmed rule into the target `AGENTS.md`: dedupe, back up, record the ledger entry, optionally run your own `docs-lint` gate, then report file and line numbers. |
-| `steward_plan` | Project plans: `save` writes `PLAN-*.md` in the workspace root (6 mandatory sections, optional gap/mode sections), `get` / `list` read them, `update` ticks steps and logs progress. Update semantics are `merge` / `append` / `replace`; the default `merge` never wipes existing check marks. |
+| `steward_plan` | Project plans: `save` writes `PLAN-*.md` in the workspace root (6 mandatory sections, optional gap / parallel / mode sections), `get` / `list` read them, `update` ticks steps and logs progress. Update semantics are `merge` / `append` / `replace`; the default `merge` never wipes existing check marks. |
 | `steward_search` | Searches every `AGENTS.md`, the plugin registry and `PLAN-*.md` for the literal text and returns `path:line`, so "did I say this before?" does not rely on memory. |
 | `steward_ledger` | Lists every rule registered in the ledger and marks whether it can still be found in its file (missing = hand-edited or deleted). |
 | `steward_timeline` | Threads ledger changes, error records, plans and rules by date into a timeline; can write `TIMELINE.md` into a workspace. |
@@ -51,12 +51,24 @@ Optional: map phrases to one of your workspaces so placement suggestions get sha
 | Item | Path |
 |---|---|
 | Rule text | `~/.dsh/AGENTS.md` (user level) or `<workspace>/AGENTS.md` (workspace level) |
-| Ledger index | `~/.dsh/steward/ledger.json` (source, target and time only) |
-| Backups before writing | `~/.dsh/steward/backups/` |
-| Placement routes (optional) | `~/.dsh/steward/domains.json` |
+| Ledger index | `~/.dsh/koujing/ledger.json` (source, target and time only) |
+| Backups before writing | `~/.dsh/koujing/backups/` |
+| Placement routes (optional) | `~/.dsh/koujing/domains.json` |
 | Plans / timeline | `<workspace>/PLAN-*.md`, `<workspace>/TIMELINE.md` |
 
 The plugin ships no database of its own.
+
+## Optional sections: gap / parallel·worktree / effort
+
+Beyond the six mandatory sections a plan may carry three optional ones; omit them and they never appear, so small projects are not forced into the format.
+
+| Section | Parameter | When to add it |
+|---|---|---|
+| Gap | `gap` | Benchmark / parity / selection / porting projects: per item "what it has / where we stand / verdict / landing spot" |
+| Parallel / worktree | `parallel` | The project has independent steps: which steps can run in parallel, which tree (name + base branch/commit), merge-back order and gate, which same-file steps must stay serial. A step tagged `[并行]` makes `check` require this section |
+| Effort | `modes` | 5+ steps or effort switching: per-step High/Max with reasons and switch points |
+
+`check` only **warns** about the parallel section: empty section, no tree attribution (main tree / tree name), or steps tagged `[并行]` without the section. Plans with `status: done` are not checked.
 
 ## Three update modes of `save`
 
@@ -83,7 +95,7 @@ Three invariants:
 
 ## FAQ
 
-1. **Can it damage my rules?** It backs up to `~/.dsh/steward/backups/` before writing, appends instead of rewriting, and asks before writing when a similar entry already exists.
+1. **Can it damage my rules?** It backs up to `~/.dsh/koujing/backups/` before writing, appends instead of rewriting, and asks before writing when a similar entry already exists.
 2. **How does it pick a workspace?** By "would this still hold in another workspace?" (a named workspace wins, otherwise user level); force it with the `workspace` parameter.
 3. **Do I have to rewrite a whole plan to change one line?** No: `merge` (default) only merges the changed steps and keeps check marks and hand-written sections.
 4. **Panel blank or 401?** Both data routes are same-origin read-only endpoints that need a token-bearing page; opening the URL directly returns 401 by design.

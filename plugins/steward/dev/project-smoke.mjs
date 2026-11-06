@@ -181,6 +181,32 @@ try {
 }
 check(srcErr2.includes('source 不存在'), 'update 改到不存在的源目录被拒绝', srcErr2);
 
+console.log('=== 12. close 时 STATUS 不存在：必须现生成，不许静默跳过仍报成功 ===');
+P.registerProject({ key: 'nostatus', title: '无当前态', source: WS, statusFile: path.join(WS, 'S-nostatus.md'), handoffDir: WS });
+check(!fs.existsSync(path.join(WS, 'S-nostatus.md')), '前提：收尾前 STATUS 不存在');
+const ns = P.closeProject('nostatus', { note: '缺当前态收尾' });
+check(ns.statusCreated === true, '返回 statusCreated=true（不再假装已标记）');
+const nsText = fs.existsSync(ns.statusFile) ? fs.readFileSync(ns.statusFile, 'utf8') : '';
+check(!!nsText, 'STATUS 已被生成（不再是缺失状态）');
+check(/已收尾/.test(nsText) && /当前态（STATUS）/.test(nsText), '生成的 STATUS 同时带生成标记与「已收尾」指针');
+check(nsText.includes(path.basename(ns.handoff)), 'STATUS 里指向的冻结快照文件名真实存在');
+
+console.log('=== 13. close 遇到手写文档：报错且原文零改动 ===');
+P.registerProject({ key: 'hijack', title: '被占位', source: WS, statusFile: path.join(WS, 'S-hijack.md'), handoffDir: WS });
+P.writeStatus(P.getProject('hijack'));
+const hijackFile = path.join(WS, 'S-hijack.md');
+fs.writeFileSync(hijackFile, '# 手写 STATUS\n\n别覆盖我\n', 'utf8');
+const hHand = sha(hijackFile);
+let handErr = '';
+try {
+  P.closeProject('hijack');
+} catch (e) {
+  handErr = e.message;
+}
+check(handErr.includes('不是 koujing 生成的'), 'close 拒绝改写手写文档', handErr);
+check(sha(hijackFile) === hHand, '手写文档 sha256 未变');
+check(!P.getProject('hijack').closedAt, '失败时档案没被标成已收尾');
+
 console.log('');
 if (fails.length) {
   console.log(`结果：${fails.length} 条失败`);

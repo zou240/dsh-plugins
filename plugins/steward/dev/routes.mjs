@@ -83,9 +83,12 @@ ok('注册了三条只读路由', registered.length === 3, registered.map((r) =>
 const NEW_TOOLS = ['card', 'plan', 'commit', 'search', 'ledger', 'change', 'project', 'handoff', 'log', 'timeline', 'index'];
 const oldNames = NEW_TOOLS.map((n) => `koujing_${n}`);
 const newNames = NEW_TOOLS.map((n) => `steward_${n}`);
+const wantAliases = process.env.STEWARD_LEGACY_ALIASES === '1';
 ok(
-  '注册了十一个工具 + 十一个旧名别名',
-  toolNames.length === 22 && newNames.every((n) => toolNames.includes(n)) && oldNames.every((n) => toolNames.includes(n)),
+  wantAliases ? '注册了十一个工具 + 十一个旧名别名（兼容开关开）' : '默认只注册十一个 steward_* 工具（旧名别名已下线）',
+  toolNames.length === (wantAliases ? 22 : 11) &&
+    newNames.every((n) => toolNames.includes(n)) &&
+    (!wantAliases || oldNames.every((n) => toolNames.includes(n))),
   `${toolNames.length} 个：${toolNames.join(', ')}`,
 );
 
