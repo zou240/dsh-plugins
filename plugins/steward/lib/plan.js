@@ -709,7 +709,12 @@ export function auditPlanText(text) {
   }
 
   const fails = issues.filter((i) => i.level === 'fail').length;
-  return { ok: fails === 0, issues, steps: steps.length, done, status, decisions: decisionsInfo };
+  // 无「决策票据」节时 decisionsInfo 为 undefined：整个键不出现，而不是挂一个 undefined。
+  // 工具面把这份 rows 原样返回给宿主，带 undefined 属性会被「无损 JSON」校验判失败——
+  // 2026-11-07 修：steward_plan check 对 36/36 无票据节的计划一律报 not lossless JSON。
+  const result = { ok: fails === 0, issues, steps: steps.length, done, status };
+  if (decisionsInfo !== undefined) result.decisions = decisionsInfo;
+  return result;
 }
 
 /**

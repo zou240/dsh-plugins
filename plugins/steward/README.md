@@ -159,7 +159,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 ## 自测
 
 ```bash
-node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 口径卡深问 / 票据夹具 1–30（含受控写）/ 项目与收尾复盘 / 并发写）
+node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 口径卡深问 / 票据夹具 1–31（含受控写与工具面序列化）/ 项目与收尾复盘 / 并发写）
 ```
 
 ## 许可

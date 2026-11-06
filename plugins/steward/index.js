@@ -1042,6 +1042,24 @@ function kbCandidates(ctx, exec) {
   return out;
 }
 
+/**
+ * 工具返回值统一出口：递归去掉 undefined 属性。
+ * 宿主对工具结果做「无损 JSON」校验，带 undefined 属性的对象会被判失败
+ * （2026-11-07：steward_plan check 的 rows[].decisions=undefined 导致该工具整体不可用）。
+ */
+function jsonSafe(value) {
+  if (Array.isArray(value)) return value.map(jsonSafe);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      out[k] = jsonSafe(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function apply(ctx) {
   const lang = pickLang(ctx);
   const sectionText = lang === 'en' ? POLICY_EN : POLICY_ZH;
@@ -1058,7 +1076,7 @@ export function apply(ctx) {
         isConcurrencySafe: def.isConcurrencySafe,
         execute: async (args, exec) => {
           try {
-            return await def.run(args ?? {}, exec, ctx);
+            return jsonSafe(await def.run(args ?? {}, exec, ctx));
           } catch (err) {
             return { text: `失败：${err?.message ?? err}` };
           }
@@ -1087,7 +1105,7 @@ export function apply(ctx) {
             deprecated.add(oldName);
             let r;
             try {
-              r = await def.run(args ?? {}, exec, ctx);
+              r = jsonSafe(await def.run(args ?? {}, exec, ctx));
             } catch (err) {
               r = { text: `失败：${err?.message ?? err}` };
             }

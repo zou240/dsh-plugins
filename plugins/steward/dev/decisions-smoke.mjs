@@ -1,5 +1,5 @@
 /**
- * 决策票据 v1.3 夹具（SPEC §8 夹具 1–25；24/25 = 关闭闸门：save/update/close 三处；26–30 = §13 受控写四动作）。
+ * 决策票据 v1.3 夹具（SPEC §8 夹具 1–25；24/25 = 关闭闸门：save/update/close 三处；26–30 = §13 受控写四动作；31 = 工具面返回值可无损序列化）。
  * 用法：node dev/decisions-smoke.mjs
  *
  * 隔离 HOME + 临时工作区，不碰真实 ~/.dsh；夹具 1 例外：只读扫真实在册计划（断言票据相关 issue = 0）。
@@ -725,6 +725,41 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
     '30.9 混合 EOL：frontmatter 仍 LF、正文仍 CRLF、票已写入',
     mixedText.startsWith('---\n') && mixedText.includes('\r\n') && mixedText.includes('### T-01 混合票'),
     JSON.stringify({ head: mixedText.slice(0, 8), crlf: mixedText.includes('\r\n') }),
+  );
+}
+
+// 31. 工具面返回值可无损序列化（2026-11-07 回归：check 的 rows[].decisions=undefined → 宿主判 not lossless JSON，工具整体不可用）
+{
+  const undefinedPaths = (o, p = 'r', out = []) => {
+    if (o && typeof o === 'object') {
+      for (const k of Object.keys(o)) {
+        if (o[k] === undefined) out.push(`${p}.${k}`);
+        else undefinedPaths(o[k], `${p}.${k}`, out);
+      }
+    }
+    return out;
+  };
+
+  const saved = save('dec-plain-tool-check'); // 不传 decisions → 无「## 决策票据」节
+  const one = await callTool('steward_plan', { action: 'check', plan: saved.file });
+  const badOne = undefinedPaths(one);
+  ok(
+    '31.1 工具面 check（无票据节）：可返回且返回值无 undefined 属性',
+    badOne.length === 0 && String(one.text).includes('计划检查 1 份'),
+    JSON.stringify(badOne.slice(0, 3)),
+  );
+  ok(
+    '31.2 check 的 rows 里该计划不带 decisions 键（不是挂 undefined）',
+    Array.isArray(one.rows) && one.rows.length === 1 && !('decisions' in one.rows[0]),
+    JSON.stringify(Object.keys(one.rows?.[0] ?? {})),
+  );
+
+  const all = await callTool('steward_plan', { action: 'check' });
+  const badAll = undefinedPaths(all);
+  ok(
+    '31.3 全量 check 返回值同样无 undefined（多份计划回归面）',
+    badAll.length === 0 && (all.rows?.length ?? 0) > 1,
+    `${all.rows?.length ?? 0} 份 / ${badAll.slice(0, 3).join(',')}`,
   );
 }
 
