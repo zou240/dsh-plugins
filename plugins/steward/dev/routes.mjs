@@ -80,12 +80,12 @@ const out = [];
 const ok = (name, cond, extra = '') => out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? `  ${extra}` : ''}`);
 
 ok('注册了三条只读路由', registered.length === 3, registered.map((r) => r.path).join(', '));
-const NEW_TOOLS = ['card', 'plan', 'commit', 'search', 'ledger', 'change', 'project', 'handoff', 'log', 'timeline'];
+const NEW_TOOLS = ['card', 'plan', 'commit', 'search', 'ledger', 'change', 'project', 'handoff', 'log', 'timeline', 'index'];
 const oldNames = NEW_TOOLS.map((n) => `koujing_${n}`);
 const newNames = NEW_TOOLS.map((n) => `steward_${n}`);
 ok(
-  '注册了十个工具 + 十个旧名别名',
-  toolNames.length === 20 && newNames.every((n) => toolNames.includes(n)) && oldNames.every((n) => toolNames.includes(n)),
+  '注册了十一个工具 + 十一个旧名别名',
+  toolNames.length === 22 && newNames.every((n) => toolNames.includes(n)) && oldNames.every((n) => toolNames.includes(n)),
   `${toolNames.length} 个：${toolNames.join(', ')}`,
 );
 

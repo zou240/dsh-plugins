@@ -14,6 +14,8 @@
  */
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import {
   blindspotsFor,
   checklist,
@@ -361,6 +363,23 @@ const PARAMS = {
         description: 'events=按时间列事件；markdown=输出完整时间线文档；publish=写进工作区 TIMELINE.md',
       },
       workspace: { type: 'string', description: 'publish 时写到哪个工作区，省略用当前会话的工作目录' },
+    },
+    required: ['action'],
+    additionalProperties: false,
+  },
+  index: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['status', 'rebuild', 'find', 'refs', 'recent', 'check', 'explain', 'views'],
+        description:
+          'rebuild=重建索引；find=中文全文检索（query 必填）；refs=反向引用（query 给文件/id/标题片段）；recent=最近改动；check=六条一致性规则（error 时退 1）；explain=看某文件被推断的 kind/truth；views=生成 PLANS-INDEX.md（write=true）；status=库状态',
+      },
+      query: { type: 'string', description: 'find 的检索词；refs / explain 的目标（文件路径、id 或标题片段）' },
+      days: { type: 'integer', description: 'recent：看最近几天，默认 7' },
+      write: { type: 'boolean', description: 'views：true=写入 D:\\dsh\\PLANS-INDEX.md' },
+      json: { type: 'boolean', description: '输出机器可读 JSON' },
     },
     required: ['action'],
     additionalProperties: false,
@@ -724,7 +743,76 @@ const TOOLS = [
       return { text: L.join('\n'), timeline: tl };
     },
   },
+  {
+    name: 'steward_index',
+    description:
+      '全要素索引层（生成物，只读正本）：扫全量 md + 插件 / 常驻 / 项目 / 凭据 / 生成物等实体，回答「东西在哪 / 谁引用了它 / 以哪份为准 / 新文件归哪」。rebuild 重建；find 中文全文（2 字词可命中）；refs 反向引用；recent 最近改动；check 六条一致性规则（索引过期 / 双真源 / 同名文件 / 死链 / 内容重复 / 索引覆盖），有 error 时命令退 1；explain 看某文件被推断的 kind / truth；views 生成 PLANS-INDEX.md。',
+    parameters: PARAMS.index,
+    isConcurrencySafe: () => false,
+    run: async (args, exec, ctx) => {
+      const kb = kbCandidates(ctx, exec).find((p) => {
+        try {
+          return existsSync(p);
+        } catch {
+          return false;
+        }
+      });
+      if (!kb) {
+        return {
+          text: '找不到 tools\\kb.mjs：确认它在工作区的 tools\\ 下，或用环境变量 KB_MJS 指向绝对路径；也可直接跑 `node tools\\kb.mjs rebuild`。',
+        };
+      }
+      const action = String(args?.action || 'status');
+      const argv = [kb, action];
+      if (args?.query) {
+        const q = String(args.query);
+        if (action === 'find') argv.push(...q.split(/\s+/).filter(Boolean));
+        else argv.push(q);
+      }
+      if (args?.days != null) argv.push('--days', String(args.days));
+      if (action === 'views' && args?.write) argv.push('--write');
+      if (args?.json) argv.push('--json');
+      try {
+        const out = execFileSync(process.execPath, argv, {
+          encoding: 'utf8',
+          timeout: 60000,
+          windowsHide: true,
+          maxBuffer: 8 * 1024 * 1024,
+        });
+        return { text: (out || '').trim() || '(无输出)', kb, exitCode: 0 };
+      } catch (err) {
+        const txt = [err?.stdout, err?.stderr]
+          .filter(Boolean)
+          .map((s) => String(s).trim())
+          .filter(Boolean)
+          .join('\n');
+        return { text: `kb ${action} 退出码 ${err?.status ?? '?'}\n${txt || err?.message || ''}`, kb, exitCode: err?.status ?? -1 };
+      }
+    },
+  },
 ];
+
+function kbCandidates(ctx, exec) {
+  const out = [];
+  if (process.env.KB_MJS) out.push(process.env.KB_MJS);
+  let wd = null;
+  try {
+    const w = ctx.get('workingDirectory');
+    const session = exec?.agent?.session;
+    if (w && session) wd = w.get(session);
+  } catch {
+    /* 没有 workingDirectory 服务就退回进程 cwd */
+  }
+  let dir = wd || process.cwd();
+  for (let i = 0; i < 4; i++) {
+    out.push(path.join(dir, 'tools', 'kb.mjs'));
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  out.push('D:\\dsh\\tools\\kb.mjs');
+  return out;
+}
 
 export function apply(ctx) {
   const lang = pickLang(ctx);
