@@ -158,7 +158,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 ## 自测
 
 ```bash
-node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 票据 25 夹具 / 项目 / 并发写）
+node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 票据夹具 1–30（含受控写）/ 项目 / 并发写）
 ```
 
 ## 许可

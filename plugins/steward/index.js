@@ -406,7 +406,7 @@ const PARAMS = {
       accept: { type: 'string', description: 'save：验收方式' },
       risks: { type: 'string', description: 'save：风险与回滚' },
       status: { type: 'string', enum: ['active', 'paused', 'done'], description: 'save/update：计划状态' },
-      plan: { type: 'string', description: 'get/update：计划绝对路径，或计划名（PLAN-xxx.md / xxx）' },
+      plan: { type: 'string', description: 'get/update/init/ticket/claim/resolve：计划绝对路径，或计划名（PLAN-xxx.md / xxx）；受控写只认文件名 PLAN-*.md（否则 DEC_NOT_PLAN）' },
       progress: { type: 'string', description: 'update：追加一条带时间的进度记录（save 不接受，传给 save 会报错）' },
       step: { type: 'string', description: 'update：步骤序号（如 "3"）或步骤文字片段' },
       done: { type: 'boolean', description: 'update：配合 step，true=勾选（默认），false=取消勾选' },
@@ -556,7 +556,7 @@ const TOOLS = [
           action === 'init'
             ? r.created
               ? `已初始化「## 决策票据」节：${r.file}`
-              : `「## 决策票据」节已存在，未新建：${r.file}`
+              : `「## 决策票据」节已存在，未改动（未写盘）：${r.file}`
             : action === 'ticket'
               ? `已新增票 ${r.ticket.id}（open）：${r.ticket.title ?? ''}\n票：${r.file}`
               : action === 'claim'

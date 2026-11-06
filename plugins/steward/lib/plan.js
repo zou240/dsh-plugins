@@ -179,7 +179,8 @@ export function parseSections(body) {
   for (let i = 0; i < heads.length; i += 1) {
     const end = i + 1 < heads.length ? heads[i + 1].lineStart : src.length;
     const text = src.slice(heads[i].start, end).replace(/^\r?\n/, '').replace(/\s+$/, '');
-    out.push({ name: heads[i].name, key: keyOf(heads[i].name), text });
+    // lineStart = 标题行起点；bodyStart = 标题行之后（正文字节起点）；end = 下一个标题行起点 / 文末
+    out.push({ name: heads[i].name, key: keyOf(heads[i].name), text, lineStart: heads[i].lineStart, bodyStart: heads[i].start, end });
   }
   return out;
 }
@@ -765,7 +766,7 @@ export function assertDecisionsClosable(finalText, { oldText = null } = {}) {
   }
 }
 
-// ---------------------------------------------------------------- 受控写（SPEC §13，v1.3）
+// ---------------------------------------------------------------- 受控写（SPEC §12，v1.3）
 
 const failKeyOf = (i) => `${i.code}|${i.ticket ?? ''}|${i.field ?? ''}`;
 const codeRank = (c) => {
@@ -773,15 +774,32 @@ const codeRank = (c) => {
   return i < 0 ? 99 : i;
 };
 
+/** 只戳 frontmatter 的 updated 行，其余字节不动（无 frontmatter 时原样返回） */
+function stampUpdated(src, day) {
+  const eol = src.includes('\r\n') ? '\r\n' : '\n';
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(src);
+  if (!m) return src;
+  const inner = m[1];
+  const nextInner = /^updated:[^\r\n]*/m.test(inner)
+    ? inner.replace(/^updated:[^\r\n]*/m, `updated: ${day}`)
+    : `${inner}${eol}updated: ${day}`;
+  return `---${eol}${nextInner}${eol}---${src.slice(m[0].length)}`;
+}
+
 /**
- * 受控写的唯一写路径：读 → parseDecisions → mutate(tickets) → renderDecisions → 原子写。
+ * 受控写的唯一写路径：读 → parseDecisions → mutate(tickets) → renderDecisions → **只替换决策票据节**。
  *
- * 只拒「本次新增的 fail」：老计划里已有的票据 fail 不挡住别的票（否则一张脏票锁死全节）。
+ * 节外字节一律不动（BOM / CRLF / 节级说明 / 步骤节里的说明段和代码围栏都保留），只戳 updated。
+ * 只拒「本次新增的 fail」：老计划里已有的票据 fail 不挡住别的票（否则一张脏票锁死全节）；
+ * 但节里已有重复 ID 时整节拒写（改哪块都不确定），见 SPEC §12。
  * 非原子：读改写之间没有 CAS / 锁；两次调用并发以最后落盘为准（后写覆盖先写），不承诺独占。
  * @param {{ref: string, mutate?: (tickets: object[]) => object[]}} opts
  */
 export function mutateDecisions({ ref, mutate }) {
   const file = resolvePlan(ref);
+  if (!PLAN_RE.test(path.basename(file))) {
+    throw decErr('DEC_NOT_PLAN', undefined, `DEC_NOT_PLAN 只能改 PLAN-*.md：${path.basename(file)}（文件未写）`);
+  }
   const raw = fs.readFileSync(file, 'utf8');
   const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
   const src = raw.slice(bom.length);
@@ -789,17 +807,24 @@ export function mutateDecisions({ ref, mutate }) {
   if (old.status === 'done') {
     throw decErr('DEC_READONLY', undefined, 'DEC_READONLY 计划已收尾（status=done）：不再改动决策票据；要改先 update status=active');
   }
-  const byKey = sectionsByKey(splitFrontmatter(src).body);
-  const hadSection = 'decisions' in byKey;
-  const before = parseDecisions(hadSection ? byKey.decisions : '');
+  const eol = src.includes('\r\n') ? '\r\n' : '\n';
+  const stamped = stampUpdated(src, stampDate());
+  const { body } = splitFrontmatter(stamped);
+  const secs = parseSections(body);
+  const hit = secs.find((s) => s.key === 'decisions') ?? null;
+  const before = parseDecisions(hit ? hit.text : '');
   const dups = duplicateTicketIds(before.tickets);
   if (dups.length) {
     throw decErr('DEC_DUP_ID', dups, `DEC_DUP_ID 票据 ID 重复：${dups.join(', ')}（先修好重复 ID 再动票，文件未写）`);
   }
   const beforeFails = new Set(before.issues.filter((i) => i.level === 'fail').map(failKeyOf));
   const tickets = mutate ? mutate(before.tickets) : before.tickets;
-  const nextText = renderDecisions(tickets);
-  const after = parseDecisions(nextText);
+  const nextSectionText = renderDecisions(tickets);
+  // init 幂等：节已在且票没变 → 不写盘（连字节都不碰）
+  if (hit && JSON.stringify(tickets) === JSON.stringify(before.tickets)) {
+    return { file, hadSection: true, changed: false, decisions: decisionSummary(nextSectionText), issues: before.issues };
+  }
+  const after = parseDecisions(nextSectionText);
   const introduced = after.issues.filter((i) => i.level === 'fail' && !beforeFails.has(failKeyOf(i)));
   if (introduced.length) {
     const first = [...introduced].sort((a, b) => codeRank(a.code) - codeRank(b.code))[0];
@@ -807,26 +832,23 @@ export function mutateDecisions({ ref, mutate }) {
     err.issues = introduced;
     throw err;
   }
-  // 用与 save 相同的渲染器重写整份计划（节名/顺序由 SECTIONS 决定，手写节搬到文末，updated 戳今天）
-  const nextFull = render({
-    title: old.title,
-    goal: old.goal,
-    gap: old.gap,
-    scope: old.scope,
-    decisionsText: nextText,
-    steps: old.steps,
-    parallel: old.parallel,
-    modes: old.modes,
-    accept: old.accept,
-    risks: old.risks,
-    status: old.status,
-    created: old.meta.created,
-    progress: old.progress,
-    isNew: false,
-    extras: old.extras,
-  });
-  writeAtomic(file, bom + nextFull);
-  return { file, hadSection, decisions: decisionSummary(nextText), issues: after.issues };
+  // 只重建「决策票据」这一段：节首/节尾各一个空行，标点与换行沿用文件原样
+  const decText = nextSectionText ? nextSectionText.split('\n').join(eol) : '';
+  const region = decText ? `${eol}${decText}${eol}${eol}` : eol;
+  let nextBody;
+  if (hit) {
+    nextBody = body.slice(0, hit.bodyStart) + region + body.slice(hit.end);
+  } else {
+    const stepsSec = secs.find((s) => s.key === 'steps');
+    const block = `## 决策票据${eol}${region}`;
+    nextBody = stepsSec
+      ? body.slice(0, stepsSec.lineStart) + block + body.slice(stepsSec.lineStart)
+      : `${body.replace(/\s+$/, '')}${eol}${eol}${block}`;
+  }
+  nextBody = nextBody.replace(/\s+$/, '') + eol;
+  const prefix = stamped.slice(0, stamped.length - body.length);
+  writeAtomic(file, bom + prefix + nextBody);
+  return { file, hadSection: hit !== null, changed: true, decisions: decisionSummary(nextSectionText), issues: after.issues };
 }
 
 /** init：确保计划里有 `## 决策票据` 节（有就不新建）；幂等 */

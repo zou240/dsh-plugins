@@ -1,5 +1,5 @@
 /**
- * 决策票据 v1.2：解析 / 归一化 / 渲染（契约见 SPEC-决策票据-v1.md §3–§5、§7）。
+ * 决策票据 v1.3：解析 / 归一化 / 渲染 / 受控写纯函数（契约见 SPEC-决策票据-v1.md §3–§5、§7、§12）。
  *
  * 只处理 `## 决策票据` 的节正文（不含节标题）；frontier 与 issues 都从这里派生，不落盘。
  * 纯函数，不读文件：save(decisions) 的写路径 parse → normalize → render 也走这里。
@@ -79,8 +79,15 @@ const blankEdges = (lines) => {
 export function parseDecisions(text) {
   const src = String(text ?? '').replace(/^\uFEFF/, '');
   const blocks = [];
+  let fence = false;
   for (const line of src.split(/\r?\n/)) {
-    const m = HEAD_RE.exec(line);
+    // 代码围栏里的 `### T-xx` / `- key:` 是示例，不算票头 / 字段（SPEC §9）
+    if (/^\s*(```|~~~)/.test(line)) {
+      fence = !fence;
+      if (blocks.length) blocks[blocks.length - 1].lines.push(line);
+      continue;
+    }
+    const m = fence ? null : HEAD_RE.exec(line);
     if (m) {
       blocks.push({ id: m[1], title: m[2].trim(), lines: [] });
     } else if (blocks.length) {
@@ -102,7 +109,17 @@ export function parseDecisions(text) {
     const unknownSeen = new Map();
     const bodyLines = [];
 
+    let inFence = false;
     for (const line of b.lines) {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        bodyLines.push(line);
+        continue;
+      }
+      if (inFence) {
+        bodyLines.push(line);
+        continue;
+      }
       const fm = FIELD_RE.exec(line);
       if (!fm) {
         bodyLines.push(line);
@@ -328,7 +345,7 @@ export function firstTickets(tickets) {
  * 动作级错误码：只经 err.code 抛出，不进 issues 数组（issues 只放解析期问题，§3.1）。
  * 非原子：这里是纯函数，读写盘由 plan.js 的 mutateDecisions 负责；单文件 markdown 没有 CAS。
  */
-export const DECISION_ACTION_CODES = ['DEC_NOT_FOUND', 'DEC_STATE', 'DEC_READONLY', 'DEC_INVALID_ID'];
+export const DECISION_ACTION_CODES = ['DEC_NOT_FOUND', 'DEC_STATE', 'DEC_READONLY', 'DEC_INVALID_ID', 'DEC_NOT_PLAN'];
 
 function actionErr(code, msg, extra) {
   const e = new Error(msg);

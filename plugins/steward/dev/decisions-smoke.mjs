@@ -490,8 +490,27 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
 
   save('dec-init-done', undefined, { status: 'done' });
   const fdone = path.join(WS, 'PLAN-dec-init-done.md');
+  const doneBefore = fs.readFileSync(fdone, 'utf8');
   const e0 = attempt(() => plan.initDecisions(fdone)).err;
-  ok('26.3 done 计划 → DEC_READONLY、文件不变', e0?.code === 'DEC_READONLY' && fs.readFileSync(fdone, 'utf8').startsWith('---'), e0?.code ?? '没有抛错');
+  ok('26.3 done 计划 → DEC_READONLY、字节不变', e0?.code === 'DEC_READONLY' && fs.readFileSync(fdone, 'utf8') === doneBefore, e0?.code ?? '没有抛错');
+
+  // 26.4 节已存在（手写非规范形态）→ init 不写盘、字节不变
+  const rawHand = [
+    '---', 'title: dec-init-hand', 'status: active', 'created: 2026-11-07', '---', '', '# dec-init-hand', '',
+    '## 目标', '', 'g', '', '## 范围', '', '- 做：x', '',
+    '## 决策票据', '', '### T-01 手写', '- status: open', '- type: task', '- question: q', '',
+    '## 步骤', '', '- [ ] 1. 甲 [High] [自做]', '- [ ] 2. 乙 [High] [自做]', '- [ ] 3. 丙 [High] [自做]', '',
+    '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-07 建立', '',
+  ].join('\n');
+  const fhand = path.join(WS, 'PLAN-dec-init-hand.md');
+  fs.writeFileSync(fhand, rawHand, 'utf8');
+  const handBefore = fs.readFileSync(fhand, 'utf8');
+  const rHand = plan.initDecisions(fhand);
+  ok(
+    '26.4 已存在（手写形态）→ init 幂等，不写盘、字节不变',
+    rHand.created === false && rHand.changed === false && fs.readFileSync(fhand, 'utf8') === handBefore,
+    JSON.stringify({ created: rHand.created, changed: rHand.changed }),
+  );
 }
 
 {
@@ -516,6 +535,10 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
   const e4 = attempt(() => plan.addDecisionTicket(f, { title: '坏类型', type: '乱写', question: 'q' })).err;
   ok('27.6 非法 type → DEC_STATUS、文件不变', e4?.code === 'DEC_STATUS' && fs.readFileSync(f, 'utf8') === before, e4?.code ?? '没有抛错');
   ok('27.7 其它节未被动作破坏（步骤仍 3 条）', plan.getPlan(f).parsed.steps.length === 3, String(plan.getPlan(f).parsed.steps.length));
+  const e5 = attempt(() => plan.addDecisionTicket(f, { type: 'task', question: 'q' })).err;
+  ok('27.8 缺 title → DEC_FIELD_MISSING、文件不变', e5?.code === 'DEC_FIELD_MISSING' && fs.readFileSync(f, 'utf8') === before, e5?.code ?? '没有抛错');
+  const e6 = attempt(() => plan.addDecisionTicket(f, { title: '坏引用', type: 'task', question: 'q', blocked_by: 'T-99' })).err;
+  ok('27.9 候选文本新增 DEC_REF_MISSING → 拒写、文件不变', e6?.code === 'DEC_REF_MISSING' && fs.readFileSync(f, 'utf8') === before, e6?.code ?? '没有抛错');
 }
 
 {
@@ -602,6 +625,69 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
 
   const bad = await callTool('steward_plan', { action: 'init', plan: path.join(WS, 'PLAN-dec-init-done.md') });
   ok('30.3 done 计划工具层 → 文本含 DEC_READONLY', String(bad.text).includes('DEC_READONLY'), String(bad.text).slice(0, 80));
+
+  // 30.4 决策票据节里的代码围栏：### 示例不算票头（SPEC §9）
+  const fenceText =
+    ticket('T-01', '真票', { type: 'task', status: 'open', question: 'q' }) +
+    '\n\n' +
+    '```text\n### T-02 示例\n- type: research\n- status: open\n- question: 示例\n```';
+  const dFence = plan.parseDecisions(fenceText);
+  ok(
+    '30.4 围栏里的 ### 不算票头、围栏行进 body（无 phantom 票）',
+    dFence.tickets.length === 1 && dFence.tickets[0].id === 'T-01' && dFence.tickets[0].body.includes('### T-02 示例') && dFence.issues.length === 0,
+    JSON.stringify({ ids: dFence.tickets.map((t) => t.id), issues: dFence.issues.map((i) => i.code) }),
+  );
+
+  // 30.5 非 PLAN-*.md 路径拒写（P1-2 回归）
+  const notPlan = path.join(WS, 'NOT-A-PLAN.md');
+  fs.writeFileSync(notPlan, '# 不是计划\n', 'utf8');
+  const npBefore = fs.readFileSync(notPlan, 'utf8');
+  const eNp = attempt(() => plan.initDecisions(notPlan)).err;
+  ok('30.5 非 PLAN-*.md → DEC_NOT_PLAN、字节不变', eNp?.code === 'DEC_NOT_PLAN' && fs.readFileSync(notPlan, 'utf8') === npBefore, eNp?.code ?? '没有抛错');
+
+  // 30.6 节外内容零丢失（P1-1 回归）：节前说明 / 步骤节说明段 / 围栏都保留
+  const rawPreserve = [
+    '---', 'title: dec-preserve', 'status: active', 'created: 2026-11-07', 'updated: 2026-11-07', '---', '', '# dec-preserve', '',
+    '> 节前说明：这行不能被动作吃掉。', '',
+    '## 目标', '', 'g', '',
+    '## 范围', '', '- 做：x', '',
+    '## 步骤', '', '说明段：这行也不能丢。', '', '```text', '代码围栏里的 ## 不是节', '```', '',
+    '- [ ] 1. 甲 [High] [自做]', '- [ ] 2. 乙 [High] [自做]', '- [ ] 3. 丙 [High] [自做]', '',
+    '## 验收', '', 'a', '',
+    '## 风险 / 回滚', '', 'r', '',
+    '## 进度记录', '', '- 2026-11-07 建立', '',
+  ].join('\n');
+  const fPreserve = path.join(WS, 'PLAN-dec-preserve.md');
+  fs.writeFileSync(fPreserve, rawPreserve, 'utf8');
+  const rPreserve = plan.addDecisionTicket(fPreserve, { title: '新票', type: 'task', question: 'q' });
+  const preserved = fs.readFileSync(fPreserve, 'utf8');
+  ok(
+    '30.6 只换决策票据节：节前说明 / 步骤说明段 / 步骤围栏全部保留',
+    rPreserve.changed === true &&
+      preserved.includes('> 节前说明：这行不能被动作吃掉。') &&
+      preserved.includes('说明段：这行也不能丢。') &&
+      preserved.includes('代码围栏里的 ## 不是节') &&
+      plan.getPlan(fPreserve).parsed.steps.length === 3 &&
+      preserved.includes('### T-01 新票'),
+    JSON.stringify({ bytes: preserved.length, steps: plan.getPlan(fPreserve).parsed.steps.length }),
+  );
+
+  // 30.7 CRLF + BOM：动作保留编码形态
+  const rawCrlf = '\uFEFF' + [
+    '---', 'title: dec-crlf', 'status: active', 'created: 2026-11-07', '---', '', '# dec-crlf', '',
+    '## 目标', '', 'g', '', '## 范围', '', '- 做：x', '',
+    '## 步骤', '', '- [ ] 1. 甲 [High] [自做]', '- [ ] 2. 乙 [High] [自做]', '- [ ] 3. 丙 [High] [自做]', '',
+    '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-07 建立', '',
+  ].join('\r\n');
+  const fCrlf = path.join(WS, 'PLAN-dec-crlf.md');
+  fs.writeFileSync(fCrlf, rawCrlf, 'utf8');
+  plan.addDecisionTicket(fCrlf, { title: 'CRLF 票', type: 'task', question: 'q' });
+  const crlfText = fs.readFileSync(fCrlf, 'utf8');
+  ok(
+    '30.7 CRLF+BOM 计划：BOM 保留、全文仍 CRLF、票已写入',
+    crlfText.startsWith('\uFEFF') && !/(^|[^\r])\n/.test(crlfText) && crlfText.includes('### T-01 CRLF 票'),
+    JSON.stringify({ bom: crlfText.startsWith('\uFEFF'), lfOnly: /(^|[^\r])\n/.test(crlfText) }),
+  );
 }
 
 console.log(out.join('\n'));
