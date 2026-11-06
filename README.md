@@ -8,9 +8,7 @@ DSH（DeepSeek Harness）插件单仓。
 
 ## 安装
 
-```bash
-dsh plugin add dsh-plugin-steward
-```
+安装步骤见 [`plugins/steward/README.md`](plugins/steward/README.md)（dsh plugin add / npm 两种方式都在那份里维护）。
 
 ## 许可
 
