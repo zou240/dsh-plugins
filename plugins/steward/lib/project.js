@@ -9,7 +9,7 @@ import path from 'node:path';
 import { DSH, exists, readText, ensureDir } from './core.js';
 import { appendChange, listChanges, stamp } from './change.js';
 import { listLogs } from './log.js';
-import { getPlan, updatePlan, resolvePlan } from './plan.js';
+import { getPlan, updatePlan, resolvePlan, parsePlan, assertDecisionsClosable } from './plan.js';
 
 const REG = path.join(DSH, 'projects.json');
 
@@ -307,6 +307,36 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   const day = at.slice(0, 10);
   const dir = p.handoffDir || path.dirname(p.statusFile);
   ensureDir(dir);
+
+  // 决策票据关闭闸门（SPEC §6.2）：写 HANDOFF 之前跑。
+  // 只有「解析 / 读文件」可降级成 warn；闸门判定抛错必须穿透到调用方，所以审计调用放在 try 之外。
+  // 三种前置不满足不拦：planDone=false / 档案无 plan（或文件不存在）/ 计划读不到。
+  const issues = [];
+  let gateText = null;
+  if (planDone !== true) {
+    issues.push({ level: 'warn', msg: '跳过票据闸门：planDone=false' });
+  } else if (!p.plan) {
+    issues.push({ level: 'warn', msg: '跳过票据闸门：没有可审计的计划' });
+  } else {
+    let planFile = null;
+    try {
+      planFile = resolvePlan(p.plan);
+    } catch {
+      planFile = null;
+    }
+    if (!planFile || !exists(planFile)) {
+      issues.push({ level: 'warn', msg: '跳过票据闸门：没有可审计的计划' });
+    } else {
+      try {
+        gateText = fs.readFileSync(planFile, 'utf8');
+        parsePlan(gateText);
+      } catch (e) {
+        gateText = null;
+        issues.push({ level: 'warn', msg: `跳过票据闸门：计划读不到（${e?.message ?? e}）` });
+      }
+    }
+  }
+  if (gateText !== null) assertDecisionsClosable(gateText);
   // 同日二次收尾不许覆盖已冻结的快照（2026-11-03 审计 P0-3）：已存在则 -2、-3 递增
   let seq = 1;
   let handoff = path.join(dir, `HANDOFF-${day}.md`);
@@ -360,5 +390,5 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   });
 
   updateProject(key, { status: 'done', closedAt: at, updated: at });
-  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change };
+  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change, issues };
 }

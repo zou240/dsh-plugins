@@ -415,23 +415,23 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
     let newDecisionsText = decisions === undefined ? undefined : renderDecisions(parseDecisions(decisions).tickets);
     // append + 空串且无旧节 = 不新增节（SPEC §6.1）
     if (md === 'append' && !newDecisionsText) newDecisionsText = undefined;
-    writeAtomic(
-      file,
-      render({
-        title,
-        goal,
-        gap,
-        scope,
-        decisionsText: newDecisionsText,
-        steps: incomingSteps,
-        parallel,
-        modes,
-        accept,
-        risks,
-        status,
-        isNew: true,
-      }),
-    );
+    const nextText = render({
+      title,
+      goal,
+      gap,
+      scope,
+      decisionsText: newDecisionsText,
+      steps: incomingSteps,
+      parallel,
+      modes,
+      accept,
+      risks,
+      status,
+      isNew: true,
+    });
+    // 关闭闸门（SPEC §6.2）：新建文件没有旧节，oldText = null；先审计后写盘
+    if (status === 'done') assertDecisionsClosable(nextText);
+    writeAtomic(file, nextText);
     return {
       file,
       created: true,
@@ -514,20 +514,21 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
     if (decisions !== undefined) replaced.push('decisions');
   }
 
-  writeAtomic(
-    file,
-    render({
-      title,
-      ...nextByKey,
-      decisionsText: nextDecisions,
-      steps: nextSteps,
-      status: status ?? old.status,
-      created: old.meta.created,
-      progress: old.progress,
-      isNew: false,
-      extras: keptExtras,
-    }),
-  );
+  const nextText = render({
+    title,
+    ...nextByKey,
+    decisionsText: nextDecisions,
+    steps: nextSteps,
+    status: status ?? old.status,
+    created: old.meta.created,
+    progress: old.progress,
+    isNew: false,
+    extras: keptExtras,
+  });
+  // 关闭闸门（SPEC §6.2）：审计本次 save 按 mode 处理后的最终全文；
+  // oldText = 旧「决策票据」节正文（不含标题，无该节 = null），丢票判据只走 assertDecisionsClosable
+  if (status === 'done') assertDecisionsClosable(nextText, { oldText: oldDecisionsRaw ?? null });
+  writeAtomic(file, nextText);
 
   return {
     file,
@@ -596,6 +597,8 @@ export function updatePlan({ ref, status, progress, stepDone, stepUndone }) {
   if (status) upd.status = status;
   const fm = ['---', ...Object.entries(upd).map(([k, v]) => `${k}: ${v}`), '---', ''].join(eol);
   const out = `${fm}${lines.join(eol)}`.replace(/(\r?\n)+$/, eol);
+  // 关闭闸门（SPEC §6.2）：审计本次 update 要写出的完整文本（勾选 / 进度已生效），先审计后写盘
+  if (status === 'done') assertDecisionsClosable(out);
   writeAtomic(file, bom + out);
   const after = parsePlan(fs.readFileSync(file, 'utf8'));
   return { file, status: after.status, steps: after.steps };

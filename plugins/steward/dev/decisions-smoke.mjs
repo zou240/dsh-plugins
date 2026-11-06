@@ -1,5 +1,5 @@
 /**
- * 决策票据 v1.2 夹具（SPEC §8，夹具 1–23；24/25 属关闭闸门，批次 2 第二步接）。
+ * 决策票据 v1.2 夹具（SPEC §8，夹具 1–25；24/25 = 关闭闸门：save/update/close 三处）。
  * 用法：node dev/decisions-smoke.mjs
  *
  * 隔离 HOME + 临时工作区，不碰真实 ~/.dsh；夹具 1 例外：只读扫真实在册计划（断言票据相关 issue = 0）。
@@ -22,7 +22,27 @@ process.env.KOUJING_HOME = HOME;
 process.env.KOUJING_ISOLATED = '1';
 
 const plan = await import('../lib/plan.js');
+const P = await import('../lib/project.js');
 const { parseDecisions, renderDecisions } = plan;
+
+// 工具面（夹具 24/25 要断言「异常被压成文本后仍可读」）：最小 ctx 只注册工具，不接路由/事件
+const idx = await import('../index.js');
+const registered = new Map();
+idx.apply({
+  config: {},
+  effect: (fn) => fn(),
+  tools: { register: (def) => { registered.set(def.name, def); return () => {}; } },
+  logger: {},
+  get: () => undefined,
+});
+const callTool = (name, args) => registered.get(name).execute(args, {});
+const attempt = (fn) => {
+  try {
+    return { ok: fn() };
+  } catch (e) {
+    return { err: e };
+  }
+};
 
 const out = [];
 const ok = (name, cond, extra = '') => out.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? `  ${extra}` : ''}`);
@@ -299,6 +319,157 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
     err = e;
   }
   ok('23.6 append 撞既有 ID → 抛 DEC_DUP_ID 且文件不写', err?.code === 'DEC_DUP_ID' && fs.readFileSync(fileApp, 'utf8') === beforeBytes, err ? `${err.code} ${err.message}` : '没有抛错');
+}
+
+// ---------------------------------------------------------------- 24 save status=done（关闭闸门）
+{
+  const title = 'dec-gate-save';
+  save(title, block(ticket('T-01', '待决', { type: 'task', status: 'open', question: 'q' })));
+  const file = path.join(WS, `PLAN-${title}.md`);
+  const before = fs.readFileSync(file, 'utf8');
+  const unchanged = () => fs.readFileSync(file, 'utf8') === before;
+
+  // 24.1 merge + 不传：旧票仍在 → DEC_PENDING
+  const e1 = attempt(() => save(title, undefined, { status: 'done' })).err;
+  ok(
+    '24.1 save done + merge 不传（旧票仍在）→ DEC_PENDING、文件字节未变',
+    e1?.code === 'DEC_PENDING' && String(e1.message).includes('DEC_PENDING') && (e1.tickets ?? []).includes('T-01') && unchanged(),
+    e1 ? `${e1.code} tickets=${JSON.stringify(e1.tickets)}` : '没有抛错',
+  );
+
+  // 24.2 replace + 不传：旧票随节消失 → DEC_PENDING
+  const e2 = attempt(() => save(title, undefined, { mode: 'replace', status: 'done' })).err;
+  ok(
+    '24.2 save done + replace 不传（旧票消失）→ DEC_PENDING、文件字节未变',
+    e2?.code === 'DEC_PENDING' && (e2.tickets ?? []).includes('T-01') && unchanged(),
+    e2 ? `${e2.code} tickets=${JSON.stringify(e2.tickets)}` : '没有抛错',
+  );
+
+  // 24.3 merge + decisions 空串：旧票随节清空 → DEC_PENDING
+  const e3 = attempt(() => save(title, '', { status: 'done' })).err;
+  ok(
+    '24.3 save done + decisions 空串（旧票消失）→ DEC_PENDING、文件字节未变',
+    e3?.code === 'DEC_PENDING' && (e3.tickets ?? []).includes('T-01') && unchanged(),
+    e3 ? `${e3.code} tickets=${JSON.stringify(e3.tickets)}` : '没有抛错',
+  );
+
+  // 24.4 同一次 save 把未决票改成终态 → 放行（A6）
+  const okDone = attempt(() =>
+    save(title, block(ticket('T-01', '已决', { type: 'task', status: 'resolved', question: 'q', resolution: 'ok', resolved_at: '2026-11-07 05:00' })), { status: 'done' }),
+  ).err;
+  ok(
+    '24.4 同一次 save 把未决改 resolved → 放行、status=done',
+    okDone === undefined && /status: done/.test(fs.readFileSync(file, 'utf8')),
+    okDone ? `${okDone.code} ${okDone.message}` : '',
+  );
+
+  // 24.5 工具层：新建 done 计划带未决票 → 文本含 DEC_PENDING，文件不创建
+  const r = await callTool('steward_plan', {
+    action: 'save',
+    workspace: WS,
+    title: 'dec-gate-tool',
+    status: 'done',
+    decisions: block(ticket('T-01', '待决', { type: 'task', status: 'open', question: 'q' })),
+  });
+  ok(
+    '24.5 工具层 save done 返回文本含 DEC_PENDING 且文件未创建',
+    String(r.text).includes('DEC_PENDING') && !fs.existsSync(path.join(WS, 'PLAN-dec-gate-tool.md')),
+    String(r.text).slice(0, 120),
+  );
+}
+
+// ---------------------------------------------------------------- 25 关闭：update done / handoff close + 三类放行
+{
+  const title = 'dec-gate-close';
+  save(title, block(ticket('T-01', '待决', { type: 'task', status: 'open', question: 'q' })));
+  const planFile = path.join(WS, `PLAN-${title}.md`);
+  const before = fs.readFileSync(planFile, 'utf8');
+
+  // 25.1 update status=done（工具层）：文本含 DEC_PENDING，文件字节未变
+  const r1 = await callTool('steward_plan', { action: 'update', plan: planFile, status: 'done' });
+  ok(
+    '25.1 update done 工具层文本含 DEC_PENDING、文件字节未变',
+    String(r1.text).includes('DEC_PENDING') && fs.readFileSync(planFile, 'utf8') === before,
+    String(r1.text).slice(0, 120),
+  );
+
+  // 25.2 handoff close：有未决票 → 抛 DEC_PENDING；HANDOFF / STATUS 都未创建，项目仍 active
+  const handoffDir = path.join(WS, 'dec-handoff');
+  const statusFile = path.join(WS, 'S-dec-gate.md');
+  P.registerProject({ key: 'dec-gate', title: '决策闸门', source: WS, statusFile, handoffDir, plan: planFile });
+  const a = attempt(() => P.closeProject('dec-gate'));
+  const handoffFiles = fs.existsSync(handoffDir) ? fs.readdirSync(handoffDir) : [];
+  ok(
+    '25.2 close 有未决票 → DEC_PENDING、HANDOFF/STATUS 未创建、项目仍 active',
+    a.err?.code === 'DEC_PENDING' &&
+      (a.err.tickets ?? []).includes('T-01') &&
+      handoffFiles.length === 0 &&
+      !fs.existsSync(statusFile) &&
+      P.getProject('dec-gate').status === 'active',
+    a.err ? a.err.code : '没有抛错',
+  );
+
+  // 25.3 工具层 handoff close 同样拦：文本含 DEC_PENDING、HANDOFF 未创建
+  save('dec-gate-close2', block(ticket('T-01', '待决', { type: 'task', status: 'open', question: 'q' })));
+  const handoffDir2 = path.join(WS, 'dec-handoff2');
+  P.registerProject({
+    key: 'dec-gate2',
+    title: '决策闸门2',
+    source: WS,
+    statusFile: path.join(WS, 'S-dec-gate2.md'),
+    handoffDir: handoffDir2,
+    plan: path.join(WS, 'PLAN-dec-gate-close2.md'),
+  });
+  const r2 = await callTool('steward_handoff', { action: 'close', key: 'dec-gate2' });
+  ok(
+    '25.3 工具层 handoff close 文本含 DEC_PENDING、HANDOFF 未创建',
+    String(r2.text).includes('DEC_PENDING') && (fs.existsSync(handoffDir2) ? fs.readdirSync(handoffDir2).length : 0) === 0,
+    String(r2.text).slice(0, 120),
+  );
+
+  // 25.4 planDone=false：不拦，issues 一条 warn，文本有 [warn]
+  const r3 = await callTool('steward_handoff', { action: 'close', key: 'dec-gate', planDone: false });
+  ok(
+    '25.4 planDone=false → 不拦，issues 1 条 warn 且文本有 [warn]',
+    r3.result?.issues?.length === 1 &&
+      r3.result.issues[0].msg.includes('planDone=false') &&
+      String(r3.text).includes('[warn]') &&
+      fs.existsSync(r3.result.handoff),
+    JSON.stringify(r3.result?.issues),
+  );
+
+  // 25.5 项目无 plan：不拦，warn「没有可审计的计划」
+  P.registerProject({
+    key: 'dec-noplan',
+    title: '无计划项目',
+    source: WS,
+    statusFile: path.join(WS, 'S-dec-noplan.md'),
+    handoffDir: path.join(WS, 'dec-handoff-noplan'),
+  });
+  const r4 = P.closeProject('dec-noplan');
+  ok(
+    '25.5 项目无 plan → 不拦，warn「没有可审计的计划」',
+    r4.issues?.length === 1 && r4.issues[0].msg.includes('没有可审计的计划'),
+    JSON.stringify(r4.issues),
+  );
+
+  // 25.6 计划读不到：不拦，warn「计划读不到」（plan 指向目录 → readFileSync EISDIR）
+  const dirPlan = path.join(WS, 'PLAN-dir.md');
+  fs.mkdirSync(dirPlan, { recursive: true });
+  P.registerProject({
+    key: 'dec-badplan',
+    title: '坏计划项目',
+    source: WS,
+    statusFile: path.join(WS, 'S-dec-bad.md'),
+    handoffDir: path.join(WS, 'dec-handoff-bad'),
+    plan: dirPlan,
+  });
+  const r5 = P.closeProject('dec-badplan');
+  ok(
+    '25.6 计划读不到 → 不拦，warn「计划读不到」',
+    r5.issues?.length === 1 && r5.issues[0].msg.includes('计划读不到'),
+    JSON.stringify(r5.issues),
+  );
 }
 
 console.log(out.join('\n'));

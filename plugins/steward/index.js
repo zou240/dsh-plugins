@@ -725,6 +725,7 @@ const TOOLS = [
         ];
         if (r.seq > 1) L.push(`说明：同日已是第 ${r.seq} 次收尾，前 ${r.seq - 1} 份按 P0-3 保留不动`);
         if (r.plan) L.push(r.plan.error ? `计划未改：${r.plan.error}` : '计划已标 done');
+        for (const i of r.issues ?? []) L.push(`[warn] ${i.msg}`);
         return { text: L.join('\n'), result: r };
       }
       const p = getProject(args?.key);
