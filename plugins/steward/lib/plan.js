@@ -20,6 +20,10 @@
  *   replace        整篇重写：未传的必填节填「（待补）」，按需节删除，手写小节丢弃（并报告丢了哪些）
  *
  * 任何模式下：进度记录永不被 save 清空（只有 update 会追加）；认不出的手写小节在 merge/append 下原样保留到文末。
+ *
+ * 格式进化解耦（2026-11-07 批次 1 决策）：节模型（SECTIONS）就在本文件里，
+ * 不引入独立的 `plan-format` 包或格式版本号——本仓外没有消费者，拆包只会多一条加载路径和一个版本面；
+ * 等真出现外部消费者（别的插件 / 脚本要读 PLAN）再抽。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -47,15 +51,44 @@ function stampTime(d = new Date()) {
   return `${stampDate(d)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/** 原子写：同目录临时文件 + rename，避免并发 save 留下半截 PLAN（批次 1）。
+ *  Windows 上 rename 覆盖正被另一进程读的目标会短暂 EPERM/EBUSY，退避重试几次再报错。 */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function writeAtomic(file, text) {
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  let lastErr;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || attempt === 5) break;
+      sleepSync(10 * (attempt + 1));
+    }
+  }
+  try {
+    fs.unlinkSync(tmp);
+  } catch {
+    /* rename 已成功时 tmp 不存在，忽略 */
+  }
+  throw lastErr;
+}
+
 function splitFrontmatter(text) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
-  if (!m) return { meta: {}, body: text };
+  // 带 BOM 的文件（编辑器另存常见）也按正常 frontmatter 解析，否则 meta 全丢、status 回落 active
+  const src = String(text ?? '').replace(/^\uFEFF/, '');
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(src);
+  if (!m) return { meta: {}, body: src };
   const meta = {};
   for (const line of m[1].split(/\r?\n/)) {
     const kv = /^([A-Za-z_]+):\s*(.*)$/.exec(line.trim());
     if (kv) meta[kv[1]] = kv[2];
   }
-  return { meta, body: text.slice(m[0].length) };
+  return { meta, body: src.slice(m[0].length) };
 }
 
 /** 二级标题名 → 规范键；认不出返回 null（= 手写小节） */
@@ -86,17 +119,53 @@ function keyOf(name) {
   return null;
 }
 
-/** 按二级标题切节，保留顺序与原文（手写小节也在里面） */
+/** 唯一的节模型：顺序 = 渲染顺序。
+ *  parse / render / save / update / audit / scaffold 全部从这里派生，避免六套写法各自漂移。
+ *  required = audit 必填 + replace 填空；optional = 只在调用方给值（含空串）时出现。
+ *  short = audit 报错里用的显示名（`风险 / 回滚` 报成「风险」）。 */
+const SECTIONS = [
+  { key: 'goal', name: '目标', required: true },
+  { key: 'gap', name: '差距对照', optional: true },
+  { key: 'scope', name: '范围', required: true },
+  { key: 'steps', name: '步骤', required: true },
+  { key: 'parallel', name: '并行 / 工作树', optional: true },
+  { key: 'modes', name: '执行档位', optional: true },
+  { key: 'accept', name: '验收', required: true },
+  { key: 'risks', name: '风险 / 回滚', required: true, short: '风险' },
+  { key: 'progress', name: '进度记录', required: true, short: '进度' },
+];
+const SECTION_BY_KEY = Object.fromEntries(SECTIONS.map((s) => [s.key, s]));
+/** save 会写回的节（步骤单独走 mergeSteps，进度只由 update 追加） */
+const SAVE_KEYS = SECTIONS.filter((s) => s.key !== 'steps' && s.key !== 'progress').map((s) => s.key);
+
+/** 按 key 取首个同名节的正文；没出现就不在 map 里（区分「没写」与「写空了」） */
+function sectionsByKey(body) {
+  const byKey = {};
+  for (const s of parseSections(body)) if (s.key && !(s.key in byKey)) byKey[s.key] = s.text;
+  return byKey;
+}
+
+/** 按二级标题切节，保留顺序与原文（手写小节也在里面）。
+ *  代码围栏（``` / ~~~）里的 `##` 不算节——夹具与老计划里出现过围栏，不能被它切坏。 */
 export function parseSections(body) {
+  const src = String(body ?? '');
+  const heads = [];
+  let fence = false;
+  let pos = 0;
+  for (const line of src.split(/(?<=\n)/)) {
+    const bare = line.replace(/\r?\n$/, '');
+    if (/^\s*(```|~~~)/.test(bare)) fence = !fence;
+    else if (!fence) {
+      const m = /^##\s+(.+?)\s*$/.exec(bare);
+      if (m) heads.push({ name: m[1].trim(), lineStart: pos, start: pos + line.length });
+    }
+    pos += line.length;
+  }
   const out = [];
-  const re = /^##\s+(.+?)\s*$/gm;
-  let hit;
-  while ((hit = re.exec(body))) {
-    const start = hit.index + hit[0].length;
-    const rest = body.slice(start);
-    const next = /^##\s+/m.exec(rest);
-    const text = (next ? rest.slice(0, next.index) : rest).replace(/^\r?\n/, '').replace(/\s+$/, '');
-    out.push({ name: hit[1].trim(), key: keyOf(hit[1]), text });
+  for (let i = 0; i < heads.length; i += 1) {
+    const end = i + 1 < heads.length ? heads[i + 1].lineStart : src.length;
+    const text = src.slice(heads[i].start, end).replace(/^\r?\n/, '').replace(/\s+$/, '');
+    out.push({ name: heads[i].name, key: keyOf(heads[i].name), text });
   }
   return out;
 }
@@ -110,8 +179,7 @@ export function parsePlan(text) {
   const { meta, body } = splitFrontmatter(text);
   const titleLine = /^#\s+(.+)$/m.exec(body);
   const secs = parseSections(body);
-  const byKey = {};
-  for (const s of secs) if (s.key && !(s.key in byKey)) byKey[s.key] = s.text;
+  const byKey = sectionsByKey(body);
   const steps = [];
   if (byKey.steps !== undefined) {
     for (const line of byKey.steps.split(/\r?\n/)) {
@@ -119,24 +187,16 @@ export function parsePlan(text) {
       if (m) steps.push({ done: m[1].toLowerCase() === 'x', text: m[2].trim().replace(/^\d+\.\s*/, '') });
     }
   }
-  const pick = (key) => byKey[key] ?? '';
-  // 按需节：不存在时返回 undefined，好让 save 区分「没写」和「写空了」
-  const opt = (key) => (key in byKey ? byKey[key] : undefined);
-  return {
+  const out = {
     meta,
     title: titleLine?.[1]?.trim() || meta.title || '',
     status: meta.status || 'active',
-    goal: pick('goal'),
-    gap: opt('gap'),
-    scope: pick('scope'),
-    accept: pick('accept'),
-    parallel: opt('parallel'),
-    modes: opt('modes'),
-    risks: pick('risks'),
-    steps,
-    progress: pick('progress'),
-    extras: secs.filter((s) => !s.key).map((s) => ({ name: s.name, text: s.text })),
   };
+  // 必填节缺失 → ''；按需节缺失 → undefined（save 靠这个区分「没写」和「写空了」）
+  for (const s of SECTIONS) out[s.key] = s.optional ? (s.key in byKey ? byKey[s.key] : undefined) : (byKey[s.key] ?? '');
+  out.steps = steps;
+  out.extras = secs.filter((s) => !s.key).map((s) => ({ name: s.name, text: s.text }));
+  return out;
 }
 
 export function planFiles(ws) {
@@ -201,41 +261,27 @@ function render({ title, goal, gap, scope, steps, parallel, modes, accept, risks
     '',
     `# ${title}`,
     '',
-    '## 目标',
-    '',
-    goal ? String(goal).trim() : '（待补）',
-    '',
   ];
-  // 按需节：只有调用方给了值（含空串）才出现在文件里，避免小项目被格式拖累
-  if (gap !== undefined) L.push('## 差距对照', '', gap ? String(gap).trim() : '（待补）', '');
-  L.push(
-    '## 范围',
-    '',
-    scope ? String(scope).trim() : '- 做：\n- 不做：',
-    '',
-    '## 步骤',
-    '',
-    ...(steps && steps.length
-      ? steps.map((s, i) => `- [${s.done ? 'x' : ' '}] ${i + 1}. ${s.text}`)
-      : ['- [ ] 1. （待补）']),
-    '',
-  );
-  if (parallel !== undefined) L.push('## 并行 / 工作树', '', parallel ? String(parallel).trim() : '（待补）', '');
-  if (modes !== undefined) L.push('## 执行档位', '', modes ? String(modes).trim() : '（待补）', '');
-  L.push(
-    '## 验收',
-    '',
-    accept ? String(accept).trim() : '（待补）',
-    '',
-    '## 风险 / 回滚',
-    '',
-    risks ? String(risks).trim() : '（待补）',
-    '',
-    '## 进度记录',
-    '',
-    ...(progress ? [progress] : isNew ? [`- ${stampTime()} 建立计划`] : ['- （暂无）']),
-    '',
-  );
+  // 每个节只给「怎么渲染正文」；节名与顺序全由 SECTIONS 决定，加节不用改这里
+  const bodies = {
+    goal: () => (goal ? String(goal).trim() : '（待补）'),
+    gap: () => (gap !== undefined ? (gap ? String(gap).trim() : '（待补）') : null),
+    scope: () => (scope ? String(scope).trim() : '- 做：\n- 不做：'),
+    steps: () =>
+      steps && steps.length
+        ? steps.map((s, i) => `- [${s.done ? 'x' : ' '}] ${i + 1}. ${s.text}`)
+        : ['- [ ] 1. （待补）'],
+    parallel: () => (parallel !== undefined ? (parallel ? String(parallel).trim() : '（待补）') : null),
+    modes: () => (modes !== undefined ? (modes ? String(modes).trim() : '（待补）') : null),
+    accept: () => (accept ? String(accept).trim() : '（待补）'),
+    risks: () => (risks ? String(risks).trim() : '（待补）'),
+    progress: () => (progress ? [progress] : isNew ? [`- ${stampTime()} 建立计划`] : ['- （暂无）']),
+  };
+  for (const s of SECTIONS) {
+    const body = bodies[s.key]();
+    if (body === null) continue;
+    L.push(`## ${s.name}`, '', ...(Array.isArray(body) ? body : [body]), '');
+  }
   // 手写小节原样搬到文末（merge / append），不丢用户自己加的东西
   for (const s of extras ?? []) {
     L.push(`## ${s.name}`, '', s.text ? String(s.text).trim() : '', '');
@@ -330,14 +376,14 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
   const incomingSteps = normalizeSteps(steps);
 
   if (!exists(file)) {
-    fs.writeFileSync(
+    writeAtomic(
       file,
       render({
         title,
         goal,
         gap,
         scope,
-        steps: md === 'replace' ? incomingSteps : incomingSteps,
+        steps: incomingSteps,
         parallel,
         modes,
         accept,
@@ -345,7 +391,6 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
         status,
         isNew: true,
       }),
-      'utf8',
     );
     return {
       file,
@@ -358,15 +403,8 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
 
   const raw = fs.readFileSync(file, 'utf8');
   const old = parsePlan(raw);
-  const oldMap = {
-    goal: old.goal,
-    gap: old.gap,
-    scope: old.scope,
-    parallel: old.parallel,
-    modes: old.modes,
-    accept: old.accept,
-    risks: old.risks,
-  };
+  const oldMap = {};
+  for (const key of SAVE_KEYS) oldMap[key] = old[key];
   const replaced = [];
   const appended = [];
 
@@ -393,13 +431,9 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
     return next;
   };
 
-  const nextGoal = resolve('goal', goal, true);
-  const nextGap = resolve('gap', gap, false);
-  const nextScope = resolve('scope', scope, true);
-  const nextParallel = resolve('parallel', parallel, false);
-  const nextModes = resolve('modes', modes, false);
-  const nextAccept = resolve('accept', accept, true);
-  const nextRisks = resolve('risks', risks, true);
+  const incomingByKey = { goal, gap, scope, parallel, modes, accept, risks };
+  const nextByKey = {};
+  for (const key of SAVE_KEYS) nextByKey[key] = resolve(key, incomingByKey[key], Boolean(SECTION_BY_KEY[key].required));
 
   const merged = Array.isArray(steps) ? mergeSteps(old.steps, incomingSteps, md) : null;
   const nextSteps = merged ? merged.steps : old.steps;
@@ -408,25 +442,18 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
   const keptExtras = md === 'replace' ? [] : old.extras;
   const droppedExtras = md === 'replace' ? old.extras.map((s) => s.name) : [];
 
-  fs.writeFileSync(
+  writeAtomic(
     file,
     render({
       title,
-      goal: nextGoal,
-      gap: nextGap,
-      scope: nextScope,
+      ...nextByKey,
       steps: nextSteps,
-      parallel: nextParallel,
-      modes: nextModes,
-      accept: nextAccept,
-      risks: nextRisks,
       status: status ?? old.status,
       created: old.meta.created,
       progress: old.progress,
       isNew: false,
       extras: keptExtras,
     }),
-    'utf8',
   );
 
   return {
@@ -441,22 +468,30 @@ export function savePlan({ workspace, title, goal, gap, scope, steps, parallel, 
 export function updatePlan({ ref, status, progress, stepDone, stepUndone }) {
   const file = resolvePlan(ref);
   const raw = fs.readFileSync(file, 'utf8');
-  const { meta } = splitFrontmatter(raw);
-  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
-  const lines = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').split(/\r?\n/);
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const src = raw.slice(bom.length);
+  const { meta } = splitFrontmatter(src);
+  const eol = src.includes('\r\n') ? '\r\n' : '\n';
+  const lines = src.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').split(/\r?\n/);
 
-  const headingAt = (name) => lines.findIndex((l) => new RegExp(`^##\\s+${name}\\s*$`).test(l));
+  // 节名 → 规范键兜底：认别名（`## 进度记录` / `## 步骤`），不写死字符串
+  const headingAt = (key) =>
+    lines.findIndex((l) => {
+      const m = /^##\s+(.+?)\s*$/.exec(l);
+      return m ? keyOf(m[1]) === key : false;
+    });
   const sectionEnd = (h) => {
     for (let i = h + 1; i < lines.length; i += 1) if (/^##\s+/.test(lines[i])) return i;
     return lines.length;
   };
 
   const mark = (target, done) => {
-    const h = headingAt('步骤');
+    const h = headingAt('steps');
     if (h < 0) return false;
     const end = sectionEnd(h);
     for (let i = h + 1; i < end; i += 1) {
-      const m = /^(\s*-\s*\[)([ xX])(\]\s*(\d+)\.\s*)(.+)$/.exec(lines[i]);
+      // 编号可选：老计划里有无编号步骤（`- [ ] 做某事`），按文字也能勾
+      const m = /^(\s*-\s*\[)([ xX])(\]\s*(?:(\d+)\.\s*)?)(.+)$/.exec(lines[i]);
       if (!m) continue;
       const same = typeof target === 'number' ? Number(m[4]) === target : m[5].trim().includes(String(target));
       if (!same) continue;
@@ -471,7 +506,7 @@ export function updatePlan({ ref, status, progress, stepDone, stepUndone }) {
 
   if (progress) {
     const line = `- ${stampTime()} ${String(progress).replace(/\r?\n/g, ' ').trim()}`;
-    const h = headingAt('进度记录');
+    const h = headingAt('progress');
     if (h < 0) {
       lines.push('', '## 进度记录', '', line);
     } else {
@@ -487,7 +522,7 @@ export function updatePlan({ ref, status, progress, stepDone, stepUndone }) {
   if (status) upd.status = status;
   const fm = ['---', ...Object.entries(upd).map(([k, v]) => `${k}: ${v}`), '---', ''].join(eol);
   const out = `${fm}${lines.join(eol)}`.replace(/(\r?\n)+$/, eol);
-  fs.writeFileSync(file, out, 'utf8');
+  writeAtomic(file, bom + out);
   const after = parsePlan(fs.readFileSync(file, 'utf8'));
   return { file, status: after.status, steps: after.steps };
 }
@@ -511,34 +546,25 @@ export function getPlan(ref) {
 
 // ---------------------------------------------------------------- 计划质量检查 / 骨架生成（0.2.3）
 
-/** 必填节：显示名 + 规范键。判「在不在」走 keyOf 归一，不做子串匹配——
- *  否则 `## 风险与回滚`（解析不到 risks）也会被 substring 放过，audit 绿而 parse 空。 */
-const REQUIRED_SECTIONS = [
-  ['目标', 'goal'],
-  ['范围', 'scope'],
-  ['步骤', 'steps'],
-  ['验收', 'accept'],
-  ['风险', 'risks'],
-  ['进度', 'progress'],
-];
-
-/** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾。 */
+/** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾。
+ *  节的存在性与正文都从同一个节模型取（不各写一遍正则，避免 audit 绿而 parse 空）。 */
 export function auditPlanText(text) {
   const src = String(text ?? '');
-  const heads = [...src.matchAll(/^##\s+(.+)$/gm)].map((m) => m[1].trim());
-  const headKeys = heads.map((h) => keyOf(h));
+  const { body } = splitFrontmatter(src);
+  const byKey = sectionsByKey(body);
   const created = (src.match(/^created:\s*(\S+)/m) ?? ['', ''])[1];
   const issues = [];
   const add = (level, msg) => issues.push({ level, msg });
 
-  for (const [name, key] of REQUIRED_SECTIONS) {
-    if (!headKeys.includes(key)) add('fail', `缺必填节：含「${name}」的一节`);
+  for (const s of SECTIONS) {
+    if (s.required && !(s.key in byKey)) add('fail', `缺必填节：含「${s.short ?? s.name}」的一节`);
   }
-  const steps = [...src.matchAll(/^- \[([ xX])\]\s*(\d+)\.\s*(.+)$/gm)].map((m) => ({
-    done: m[1].toLowerCase() === 'x',
-    n: m[2],
-    text: m[3].trim(),
-  }));
+  // 只认「步骤」节里的编号步骤（历史上 audit 全文扫，会把别的小节算进来）
+  const steps = [];
+  for (const line of (byKey.steps ?? '').split(/\r?\n/)) {
+    const m = /^- \[([ xX])\]\s*(?:(\d+)\.\s*)?(.+)$/.exec(line);
+    if (m) steps.push({ done: m[1].toLowerCase() === 'x', n: m[2] ?? '', text: m[3].trim() });
+  }
   if (steps.length < 3) add('warn', `步骤只有 ${steps.length} 条（建议 ≥3）`);
   const legacy = created < '2026-11-02';
   const noLevel = steps.filter((s) => !/\[(Off|Low|High|Max)\]/.test(s.text));
@@ -546,7 +572,7 @@ export function auditPlanText(text) {
   const noRoute = steps.filter((s) => !/\[(自做|MiMo-flash|MiMo-pro)\]/.test(s.text));
   if (noRoute.length && !legacy) add('warn', `${noRoute.length} 条步骤没标派单（[自做]/[MiMo-…]）`);
 
-  const scopeBlock = (src.match(/##\s*范围[\s\S]*?(?=\n##\s|$)/) ?? [''])[0];
+  const scopeBlock = byKey.scope ?? '';
   const isDelivery = /交付|成品|打包|脚本|插件|工具包/.test(scopeBlock);
   // 历史计划（11-03 前建立）从宽：不追溯要求用法矩阵，也不报提醒
   if (isDelivery && !src.includes('文档用法矩阵') && created >= '2026-11-03') {
@@ -555,10 +581,10 @@ export function auditPlanText(text) {
 
   const status = (src.match(/^status:\s*(\S+)/m) ?? ['', 'active'])[1];
   // 并行 / 工作树（按需节）：只对进行中的计划提示，避免给已收尾计划翻旧账（只 warn，不影响 ok）
-  const hasParallel = heads.some((h) => /并行\s*[/与·]\s*工作树|并行与工作树/.test(h));
+  const hasParallel = 'parallel' in byKey;
   if (status === 'active') {
     if (hasParallel) {
-      const block = (src.match(/##[^\n]*并行[^\n]*工作树[^\n]*\r?\n([\s\S]*?)(?=\n##\s|$)/) ?? ['', ''])[1].trim();
+      const block = String(byKey.parallel ?? '').trim();
       if (!block || block === '（待补）') {
         add('warn', '并行 / 工作树节没内容（写清哪些步骤互不依赖、开哪棵树、怎么合并回主树）');
       } else if (!/工作树|worktree|主树|树名/i.test(block)) {
@@ -593,7 +619,8 @@ export function auditAllPlans() {
   });
 }
 
-/** 生成计划骨架：六个必填节 + 交付类默认带「文档用法矩阵」+ 步骤占位（含档位/派单标记）。 */
+/** 生成计划骨架：六个必填节 + 交付类默认带「文档用法矩阵」+ 步骤占位（含档位/派单标记）。
+ *  正文由 render 统一产出（节名/顺序跟着 SECTIONS 走），保证 scaffold → parse 往返没有手写节。 */
 export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = [] }) {
   if (!workspace) throw new Error('需要 workspace');
   if (!title) throw new Error('需要 title');
@@ -601,50 +628,31 @@ export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = 
   const file = path.join(workspace, `PLAN-${slugify(title)}.md`);
   if (exists(file)) return { file, created: false, exists: true };
   const day = stampDate();
-  const stepLines = (steps.length ? steps : ['（待补：第一件可验证的事）', '（待补：做完能交付的东西）', '（待补：验收与收尾）'])
-    .map((s, i) => `- [ ] ${i + 1}. ${String(s).trim()} — [High] [自做]`)
-    .join('\n');
-  const text = [
-    '---',
-    `title: ${title}`,
-    'status: active',
-    `created: ${day}`,
-    `updated: ${day}`,
-    '---',
-    '',
-    `# ${title}`,
-    '',
-    '## 目标',
-    '',
-    goal || '（待补：做完算什么成功，一句可验收的话）',
-    '',
-    '## 范围',
-    '',
-    scope || '做：（待补）\n\n不做：（待补）',
-    '',
-    '## 步骤',
-    '',
-    stepLines,
-    '',
-    '## 验收',
-    '',
-    '（待补：逐条可执行的判据；交付类补「文档用法矩阵」）',
-    '',
-    '### 文档用法矩阵',
-    '',
-    '| 用法 | 期望 | 实跑证据（退出码 / 产物路径） |',
-    '|---|---|---|',
-    '| （待补） | （待补） | （待补） |',
-    '',
-    '## 风险 / 回滚',
-    '',
-    '（待补：最坏会怎样、怎么退、备份在哪）',
-    '',
-    '## 进度记录',
-    '',
-    `- ${day} 建立计划（steward_plan scaffold）`,
-    '',
-  ].join('\n');
-  fs.writeFileSync(file, text, 'utf8');
+  const stepList = (steps.length ? steps : ['（待补：第一件可验证的事）', '（待补：做完能交付的东西）', '（待补：验收与收尾）']).map((s) => ({
+    text: `${String(s).trim()} — [High] [自做]`,
+    done: false,
+  }));
+  const text = render({
+    title,
+    goal: goal || '（待补：做完算什么成功，一句可验收的话）',
+    scope: scope || '做：（待补）\n\n不做：（待补）',
+    steps: stepList,
+    accept: [
+      '（待补：逐条可执行的判据；交付类补「文档用法矩阵」）',
+      '',
+      '### 文档用法矩阵',
+      '',
+      '| 用法 | 期望 | 实跑证据（退出码 / 产物路径） |',
+      '|---|---|---|',
+      '| （待补） | （待补） | （待补） |',
+    ].join('\n'),
+    risks: '（待补：最坏会怎样、怎么退、备份在哪）',
+    status: 'active',
+    created: day,
+    isNew: false,
+    progress: [`- ${day} 建立计划（steward_plan scaffold）`],
+    extras: [],
+  });
+  writeAtomic(file, text);
   return { file, created: true, exists: false };
 }
