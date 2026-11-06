@@ -994,7 +994,11 @@ const TOOLS = [
         else argv.push(q);
       }
       if (args?.days != null) argv.push('--days', String(args.days));
-      if (action === 'views' && args?.write) argv.push('--write');
+      // kb views 要显式带 --plans（2026-11-07 修：只传 --write 会退 2 报用法）
+      if (action === 'views') {
+        argv.push('--plans');
+        if (args?.write) argv.push('--write');
+      }
       if (args?.json) argv.push('--json');
       try {
         const out = execFileSync(process.execPath, argv, {
