@@ -102,6 +102,8 @@ const statusBefore = readOr(path.join(p2, 'STATUS.md'));
 const r2 = P.closeProject('demo2', { note: '带复盘收尾', retro: RETRO });
 const hand2 = readOr(r2.handoff);
 check(hand2.includes('## 九、复盘（候选改进项）'), '快照里有「## 九、复盘」节');
+check(/（1\/1，status=done）/.test(hand2), '快照里的计划进度已是最终态（先标 done 再渲染）', hand2.split('\n').find((l) => l.startsWith('计划：')) ?? '');
+check(/（1\/1，status=done）/.test(readOr(path.join(p2, 'STATUS.md'))), 'STATUS 里的计划进度也是最终态');
 check(hand2.includes('机械问题必须写检查'), '快照里写明机械问题口径');
 const order = ['[高]', '[中]', '[低]'].map((s) => hand2.indexOf(`${s} `));
 check(order[0] > -1 && order[0] < order[1] && order[1] < order[2], '按严重度从高到低排列', order.join(','));

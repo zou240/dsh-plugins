@@ -380,6 +380,14 @@ export function retroTodoLine(r) {
   return `复盘[${SEVERITY_LABEL[r.severity]}] ${r.label}：${r.finding} → ${r.landing}`;
 }
 
+/** 取两段标题之间的原文（含起始标题）；找不到返回空串。 */
+function sectionSlice(text, from, to) {
+  const i = text.indexOf(from);
+  if (i < 0) return '';
+  const j = text.indexOf(to, i + from.length);
+  return j < 0 ? text.slice(i) : text.slice(i, j);
+}
+
 /** 收尾：冻结 HANDOFF 快照 + STATUS 标已收尾 + 计划标 done + 写一行账本。 */
 export function closeProject(key, { note = '', planDone = true, retro = [] } = {}) {
   // 复盘校验放在最前面：不过就不写任何文件（HANDOFF 不留半截）
@@ -429,6 +437,17 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
   // 指针带目录：handoffDir 与 statusFile 不同目录时（如 hud），只写文件名指不到（审计 P2-8）
   const handoffLabel = path.dirname(p.statusFile) === dir ? path.basename(handoff) : handoff;
 
+  // 先把计划标 done 再渲染：冻结快照与 STATUS 必须反映最终态（12/12, status=done），
+  // 否则收尾当刻的快照永远写着收尾前的进度（2026-11-07 步骤 11 真实收尾抓到）。
+  let plan = null;
+  if (planDone && p.plan) {
+    try {
+      plan = updatePlan({ ref: p.plan, status: 'done', progress: `${at} 收尾：冻结交接 ${handoff}` });
+    } catch (e) {
+      plan = { error: e.message };
+    }
+  }
+
   const head = [`# ${p.title} · 收尾交接（${day}）`, '', `> 由 \`steward_handoff close\` 在 ${at} 生成；冻结快照，不再修改。`];
   if (note) head.push('', `> 收尾说明：${note}`);
   const fresh = { ...p, updated: at };
@@ -439,6 +458,8 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
   // STATUS 是常驻当前态，收尾后必须存在并带「已收尾」指针。
   // 2026-11-06 修：原来只在 exists(statusFile) 时才标记，文件缺失就静默跳过，
   // 却照旧写快照 / 账本并回报「顶部已标已收尾」——下一个会话读到的是不存在的当前态。
+  // 2026-11-07：改成按最终态重写（计划已 done），但既有「## 二、入口」字节原样保留 ——
+  // 收尾 / 复盘都不许动那一节（步骤 11 的验收判据）。
   assertStatusTarget(p.statusFile, p.key);
   let statusCreated = false;
   if (!exists(p.statusFile)) {
@@ -447,20 +468,14 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
     statusCreated = true;
   } else {
     const old = readText(p.statusFile);
-    if (!/已收尾/.test(old.split('\n').slice(0, 8).join('\n'))) {
-      const lines = old.split(/\r?\n/);
-      lines.splice(2, 0, '', `> **已收尾 ${at}**：冻结快照见 \`${handoffLabel}\`（本文件不再更新）`);
-      fs.writeFileSync(p.statusFile, lines.join('\n'), 'utf8');
+    const keep = sectionSlice(old, '## 二、入口', '## 三、');
+    const generated = sectionSlice(body, '## 二、入口', '## 三、');
+    let next = body;
+    if (keep && generated && keep !== generated) {
+      const at2 = body.indexOf(generated);
+      next = body.slice(0, at2) + keep + body.slice(at2 + generated.length);
     }
-  }
-
-  let plan = null;
-  if (planDone && p.plan) {
-    try {
-      plan = updatePlan({ ref: p.plan, status: 'done', progress: `${at} 收尾：冻结交接 ${handoff}` });
-    } catch (e) {
-      plan = { error: e.message };
-    }
+    if (next !== old) fs.writeFileSync(p.statusFile, next, 'utf8');
   }
 
   const change = appendChange({
