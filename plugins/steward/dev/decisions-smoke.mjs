@@ -1,5 +1,5 @@
 /**
- * 决策票据 v1.2 夹具（SPEC §8，夹具 1–25；24/25 = 关闭闸门：save/update/close 三处）。
+ * 决策票据 v1.3 夹具（SPEC §8 夹具 1–25；24/25 = 关闭闸门：save/update/close 三处；26–30 = §13 受控写四动作）。
  * 用法：node dev/decisions-smoke.mjs
  *
  * 隔离 HOME + 临时工作区，不碰真实 ~/.dsh；夹具 1 例外：只读扫真实在册计划（断言票据相关 issue = 0）。
@@ -470,6 +470,138 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
     r5.issues?.length === 1 && r5.issues[0].msg.includes('计划读不到'),
     JSON.stringify(r5.issues),
   );
+}
+
+// ---------------------------------------------------------------- 26–30 受控写（SPEC §13，v1.3）
+{
+  // 26 init：建节 / 幂等 / done 计划拒写
+  save('dec-init', undefined);
+  const f = path.join(WS, 'PLAN-dec-init.md');
+  ok('26.0 前置：还没有决策票据节', !fs.readFileSync(f, 'utf8').includes('## 决策票据'));
+  const r1 = plan.initDecisions(f);
+  const raw1 = fs.readFileSync(f, 'utf8');
+  ok(
+    '26.1 init 建空节 + created=true',
+    r1.created === true && (raw1.match(/^## 决策票据$/gm) ?? []).length === 1 && plan.getPlan(f).parsed.decisions.tickets.length === 0,
+    JSON.stringify({ created: r1.created, sections: (raw1.match(/^## 决策票据$/gm) ?? []).length }),
+  );
+  const r2 = plan.initDecisions(f);
+  ok('26.2 init 幂等：不重复建节、created=false', r2.created === false && (fs.readFileSync(f, 'utf8').match(/^## 决策票据$/gm) ?? []).length === 1);
+
+  save('dec-init-done', undefined, { status: 'done' });
+  const fdone = path.join(WS, 'PLAN-dec-init-done.md');
+  const e0 = attempt(() => plan.initDecisions(fdone)).err;
+  ok('26.3 done 计划 → DEC_READONLY、文件不变', e0?.code === 'DEC_READONLY' && fs.readFileSync(fdone, 'utf8').startsWith('---'), e0?.code ?? '没有抛错');
+}
+
+{
+  // 27 ticket：自动编号 / 归一化 / 重复 ID / 非法 ID / 缺字段 / 非法 type
+  save('dec-ticket', undefined);
+  const f = path.join(WS, 'PLAN-dec-ticket.md');
+  const t1 = plan.addDecisionTicket(f, { title: '甲', type: 'research', question: 'q1' });
+  const t2 = plan.addDecisionTicket(f, { title: '乙', type: 'task', question: 'q2', blocked_by: 't-01，T-01', links: 'a.md, b.md' });
+  ok(
+    '27.1 自动编号 T-01/T-02 且都是 open',
+    t1.ticket.id === 'T-01' && t2.ticket.id === 'T-02' && t1.ticket.status === 'open' && t2.ticket.status === 'open',
+    JSON.stringify([t1.ticket.id, t2.ticket.id]),
+  );
+  ok('27.2 blocked_by 归一化去重、links 落位', eq(t2.ticket.blocked_by, ['T-01']) && eq(t2.ticket.links, ['a.md', 'b.md']), JSON.stringify({ b: t2.ticket.blocked_by, l: t2.ticket.links }));
+  const before = fs.readFileSync(f, 'utf8');
+  const e1 = attempt(() => plan.addDecisionTicket(f, { id: 'T-01', title: '重', type: 'task', question: 'q' })).err;
+  ok('27.3 显式重复 ID → DEC_DUP_ID、文件不变', e1?.code === 'DEC_DUP_ID' && fs.readFileSync(f, 'utf8') === before, e1?.code ?? '没有抛错');
+  const e2 = attempt(() => plan.addDecisionTicket(f, { id: 'X-01', title: '坏号', type: 'task', question: 'q' })).err;
+  ok('27.4 非法 ID → DEC_INVALID_ID、文件不变', e2?.code === 'DEC_INVALID_ID' && fs.readFileSync(f, 'utf8') === before, e2?.code ?? '没有抛错');
+  const e3 = attempt(() => plan.addDecisionTicket(f, { title: '缺问题', type: 'task' })).err;
+  ok('27.5 缺 question → DEC_FIELD_MISSING、文件不变', e3?.code === 'DEC_FIELD_MISSING' && fs.readFileSync(f, 'utf8') === before, e3?.code ?? '没有抛错');
+  const e4 = attempt(() => plan.addDecisionTicket(f, { title: '坏类型', type: '乱写', question: 'q' })).err;
+  ok('27.6 非法 type → DEC_STATUS、文件不变', e4?.code === 'DEC_STATUS' && fs.readFileSync(f, 'utf8') === before, e4?.code ?? '没有抛错');
+  ok('27.7 其它节未被动作破坏（步骤仍 3 条）', plan.getPlan(f).parsed.steps.length === 3, String(plan.getPlan(f).parsed.steps.length));
+}
+
+{
+  // 28 claim：缺 by / 不存在 / 正常认领 / 重复 / 终态 / 工具层非原子文案
+  save('dec-claim', undefined);
+  const f = path.join(WS, 'PLAN-dec-claim.md');
+  plan.addDecisionTicket(f, { title: '待认领', type: 'task', question: 'q' });
+  const before = fs.readFileSync(f, 'utf8');
+  const e1 = attempt(() => plan.claimDecision(f, 'T-01', '')).err;
+  ok('28.1 claim 缺 by → DEC_FIELD_MISSING、文件不变', e1?.code === 'DEC_FIELD_MISSING' && fs.readFileSync(f, 'utf8') === before, e1?.code ?? '没有抛错');
+  const e2 = attempt(() => plan.claimDecision(f, 'T-99', 'lead')).err;
+  ok('28.2 票不存在 → DEC_NOT_FOUND', e2?.code === 'DEC_NOT_FOUND', e2?.code ?? '没有抛错');
+  const r = plan.claimDecision(f, 'T-01', 'lead');
+  ok(
+    '28.3 claim → claimed + claimed_by + 本地时间格式',
+    r.ticket.status === 'claimed' && r.ticket.claimed_by === 'lead' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(r.ticket.claimed_at),
+    JSON.stringify({ status: r.ticket.status, at: r.ticket.claimed_at }),
+  );
+  const e3 = attempt(() => plan.claimDecision(f, 'T-01', 'other')).err;
+  ok('28.4 重复 claim → DEC_STATE', e3?.code === 'DEC_STATE', e3?.code ?? '没有抛错');
+  plan.resolveDecision(f, 'T-01', { resolution: '已决' });
+  const e4 = attempt(() => plan.claimDecision(f, 'T-01', 'other')).err;
+  ok('28.5 终态 claim → DEC_STATE', e4?.code === 'DEC_STATE', e4?.code ?? '没有抛错');
+
+  save('dec-claim-tool', undefined);
+  const ft = path.join(WS, 'PLAN-dec-claim-tool.md');
+  const rInit = await callTool('steward_plan', { action: 'init', plan: ft });
+  const rTicket = await callTool('steward_plan', { action: 'ticket', plan: ft, ticket_title: '工具票', type: 'task', question: 'q' });
+  const rClaim = await callTool('steward_plan', { action: 'claim', plan: ft, id: 'T-01', by: 'lead' });
+  ok(
+    '28.6 工具层 init/ticket/claim 文本正确且带「不承诺独占」提示',
+    String(rInit.text).includes('已初始化') && String(rTicket.text).includes('已新增票 T-01') && String(rClaim.text).includes('不承诺独占') && String(rClaim.text).includes('claimed_by=lead'),
+    String(rClaim.text).split('\n')[0],
+  );
+}
+
+{
+  // 29 resolve：缺 resolution / 正常 / 重复 / out-of-scope / 不存在 / 收尾联动
+  save('dec-resolve', undefined);
+  const f = path.join(WS, 'PLAN-dec-resolve.md');
+  plan.addDecisionTicket(f, { title: '甲', type: 'task', question: 'q1' });
+  plan.addDecisionTicket(f, { title: '乙', type: 'task', question: 'q2' });
+  const before = fs.readFileSync(f, 'utf8');
+  const e1 = attempt(() => plan.resolveDecision(f, 'T-01', {})).err;
+  ok('29.1 resolve 缺 resolution → DEC_RESOLUTION_MISSING、文件不变', e1?.code === 'DEC_RESOLUTION_MISSING' && fs.readFileSync(f, 'utf8') === before, e1?.code ?? '没有抛错');
+  const r1 = plan.resolveDecision(f, 'T-01', { resolution: '选 A' });
+  ok(
+    '29.2 open→resolved + resolution + resolved_at',
+    r1.ticket.status === 'resolved' && r1.ticket.resolution === '选 A' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(r1.ticket.resolved_at),
+    JSON.stringify({ status: r1.ticket.status, at: r1.ticket.resolved_at }),
+  );
+  const e2 = attempt(() => plan.resolveDecision(f, 'T-01', { resolution: '再来' })).err;
+  ok('29.3 重复 resolve → DEC_STATE', e2?.code === 'DEC_STATE', e2?.code ?? '没有抛错');
+  const r2 = plan.resolveDecision(f, 'T-02', { resolution: '不做', status: 'out-of-scope' });
+  ok('29.4 out-of-scope 终态', r2.ticket.status === 'out-of-scope' && r2.ticket.resolution === '不做', r2.ticket.status);
+  const e3 = attempt(() => plan.resolveDecision(f, 'T-99', { resolution: 'x' })).err;
+  ok('29.5 票不存在 → DEC_NOT_FOUND', e3?.code === 'DEC_NOT_FOUND', e3?.code ?? '没有抛错');
+  const done = plan.updatePlan({ ref: f, status: 'done' });
+  ok('29.6 票全部终态后 update status=done 放行（闸门联动）', done.status === 'done', done.status);
+}
+
+{
+  // 30 老 fail 不锁死整节 / done 计划工具层拒写 / resolve 工具层
+  save('dec-legacy', block(ticket('T-01', '旧脏票', { type: 'task', status: 'open' }))); // 缺 question = 老 fail
+  const f = path.join(WS, 'PLAN-dec-legacy.md');
+  const okAdd = attempt(() => plan.addDecisionTicket(f, { title: '新票', type: 'task', question: 'q' })).err;
+  const after = plan.getPlan(f).parsed.decisions;
+  ok(
+    '30.1 旧票已有 fail 不挡新票（只拒本次新增的 fail）',
+    okAdd === undefined && after.tickets.length === 2 && after.issues.some((i) => i.code === 'DEC_FIELD_MISSING' && i.ticket === 'T-01'),
+    JSON.stringify(after.issues.map((i) => `${i.code}:${i.ticket}`)),
+  );
+
+  save('dec-tool-resolve', undefined);
+  const ft = path.join(WS, 'PLAN-dec-tool-resolve.md');
+  await callTool('steward_plan', { action: 'init', plan: ft });
+  await callTool('steward_plan', { action: 'ticket', plan: ft, ticket_title: '工具票', type: 'task', question: 'q' });
+  const rr = await callTool('steward_plan', { action: 'resolve', plan: ft, id: 'T-01', resolution: 'ok' });
+  ok(
+    '30.2 工具层 resolve 文本含 status=resolved 与非原子提示',
+    String(rr.text).includes('已决 T-01') && String(rr.text).includes('status=resolved') && String(rr.text).includes('非原子'),
+    String(rr.text).split('\n')[0],
+  );
+
+  const bad = await callTool('steward_plan', { action: 'init', plan: path.join(WS, 'PLAN-dec-init-done.md') });
+  ok('30.3 done 计划工具层 → 文本含 DEC_READONLY', String(bad.text).includes('DEC_READONLY'), String(bad.text).slice(0, 80));
 }
 
 console.log(out.join('\n'));

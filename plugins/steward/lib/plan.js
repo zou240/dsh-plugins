@@ -28,7 +28,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { exists, workspaces } from './core.js';
-import { parseDecisions, renderDecisions, decisionCounts, firstTickets, PENDING_STATUSES, DECISION_CODE_ORDER } from './decisions.js';
+import {
+  parseDecisions,
+  renderDecisions,
+  decisionCounts,
+  firstTickets,
+  PENDING_STATUSES,
+  DECISION_CODE_ORDER,
+  duplicateTicketIds,
+  addTicket,
+  claimTicket,
+  resolveTicket,
+} from './decisions.js';
 
 const PLAN_RE = /^PLAN-(.+)\.md$/i;
 const MODES = ['merge', 'append', 'replace'];
@@ -752,6 +763,122 @@ export function assertDecisionsClosable(finalText, { oldText = null } = {}) {
     err.issues = [];
     throw err;
   }
+}
+
+// ---------------------------------------------------------------- 受控写（SPEC §13，v1.3）
+
+const failKeyOf = (i) => `${i.code}|${i.ticket ?? ''}|${i.field ?? ''}`;
+const codeRank = (c) => {
+  const i = DECISION_CODE_ORDER.indexOf(c);
+  return i < 0 ? 99 : i;
+};
+
+/**
+ * 受控写的唯一写路径：读 → parseDecisions → mutate(tickets) → renderDecisions → 原子写。
+ *
+ * 只拒「本次新增的 fail」：老计划里已有的票据 fail 不挡住别的票（否则一张脏票锁死全节）。
+ * 非原子：读改写之间没有 CAS / 锁；两次调用并发以最后落盘为准（后写覆盖先写），不承诺独占。
+ * @param {{ref: string, mutate?: (tickets: object[]) => object[]}} opts
+ */
+export function mutateDecisions({ ref, mutate }) {
+  const file = resolvePlan(ref);
+  const raw = fs.readFileSync(file, 'utf8');
+  const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const src = raw.slice(bom.length);
+  const old = parsePlan(src);
+  if (old.status === 'done') {
+    throw decErr('DEC_READONLY', undefined, 'DEC_READONLY 计划已收尾（status=done）：不再改动决策票据；要改先 update status=active');
+  }
+  const byKey = sectionsByKey(splitFrontmatter(src).body);
+  const hadSection = 'decisions' in byKey;
+  const before = parseDecisions(hadSection ? byKey.decisions : '');
+  const dups = duplicateTicketIds(before.tickets);
+  if (dups.length) {
+    throw decErr('DEC_DUP_ID', dups, `DEC_DUP_ID 票据 ID 重复：${dups.join(', ')}（先修好重复 ID 再动票，文件未写）`);
+  }
+  const beforeFails = new Set(before.issues.filter((i) => i.level === 'fail').map(failKeyOf));
+  const tickets = mutate ? mutate(before.tickets) : before.tickets;
+  const nextText = renderDecisions(tickets);
+  const after = parseDecisions(nextText);
+  const introduced = after.issues.filter((i) => i.level === 'fail' && !beforeFails.has(failKeyOf(i)));
+  if (introduced.length) {
+    const first = [...introduced].sort((a, b) => codeRank(a.code) - codeRank(b.code))[0];
+    const err = decErr(first.code, undefined, `${first.code} 受控写被拒：${introduced.map((i) => i.msg).join('；')}（文件未写）`);
+    err.issues = introduced;
+    throw err;
+  }
+  // 用与 save 相同的渲染器重写整份计划（节名/顺序由 SECTIONS 决定，手写节搬到文末，updated 戳今天）
+  const nextFull = render({
+    title: old.title,
+    goal: old.goal,
+    gap: old.gap,
+    scope: old.scope,
+    decisionsText: nextText,
+    steps: old.steps,
+    parallel: old.parallel,
+    modes: old.modes,
+    accept: old.accept,
+    risks: old.risks,
+    status: old.status,
+    created: old.meta.created,
+    progress: old.progress,
+    isNew: false,
+    extras: old.extras,
+  });
+  writeAtomic(file, bom + nextFull);
+  return { file, hadSection, decisions: decisionSummary(nextText), issues: after.issues };
+}
+
+/** init：确保计划里有 `## 决策票据` 节（有就不新建）；幂等 */
+export function initDecisions(ref) {
+  const r = mutateDecisions({ ref, mutate: (tickets) => tickets });
+  return { ...r, created: !r.hadSection };
+}
+
+/** ticket：追加一张 open 票；id 省略时自动取下一个号码 */
+export function addDecisionTicket(ref, spec = {}) {
+  let added = null;
+  const r = mutateDecisions({
+    ref,
+    mutate: (tickets) => {
+      const next = addTicket(tickets, spec);
+      added = next[next.length - 1];
+      return next;
+    },
+  });
+  return { ...r, ticket: added };
+}
+
+/** claim：open → claimed（记 claimed_by/at；只记录，不承诺独占） */
+export function claimDecision(ref, id, by) {
+  const at = stampTime();
+  const want = String(id ?? '').trim().toUpperCase();
+  let claimed = null;
+  const r = mutateDecisions({
+    ref,
+    mutate: (tickets) => {
+      const next = claimTicket(tickets, id, by, at);
+      claimed = next.find((t) => t.id === want) ?? null;
+      return next;
+    },
+  });
+  return { ...r, ticket: claimed, at };
+}
+
+/** resolve：open/claimed → resolved / out-of-scope（写 resolution + resolved_at） */
+export function resolveDecision(ref, id, { resolution, status } = {}) {
+  const at = stampTime();
+  const want = String(id ?? '').trim().toUpperCase();
+  let solved = null;
+  const r = mutateDecisions({
+    ref,
+    mutate: (tickets) => {
+      const next = resolveTicket(tickets, id, { resolution, status, at });
+      solved = next.find((t) => t.id === want) ?? null;
+      return next;
+    },
+  });
+  return { ...r, ticket: solved, at };
 }
 
 export function auditPlan(ref) {

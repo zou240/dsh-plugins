@@ -35,7 +35,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 |---|---|
 | `steward_card` | 把一句话的要求拆成必答维度，给出该写进哪个 `AGENTS.md` 的哪一节，并列出命中的现有规则、疑似冲突和这类事最容易漏的点。会话开头先用它，**不动文件、不下结论**。 |
 | `steward_commit` | 把确认过的一条规则写进对应 `AGENTS.md`：先查重、写前备份、记台账，可选跑你自己的 `docs-lint` 门禁，最后回报文件与行号。 |
-| `steward_plan` | 项目计划：`save` 写 `PLAN-*.md`（`merge`/`append`/`replace` 三种更新语义）、`get`/`list` 读、`update` 勾步骤记进度；**`check`** 检查六个必填节 / 档位 / 派单标记 / 交付类「文档用法矩阵」/ 并行节 / 状态与勾选矛盾；**`scaffold`** 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 `[档位] [派单]` 占位）。 |
+| `steward_plan` | 项目计划：`save` 写 `PLAN-*.md`（`merge`/`append`/`replace` 三种更新语义）、`get`/`list` 读、`update` 勾步骤记进度；**`check`** 检查六个必填节 / 档位 / 派单标记 / 交付类「文档用法矩阵」/ 并行节 / 状态与勾选矛盾；**`scaffold`** 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 `[档位] [派单]` 占位）；**`init` / `ticket` / `claim` / `resolve`** 受控写「决策票据」节（建节 / 加票 / 认领 / 决议；读改写非原子，`claim` 只记录、不承诺独占）。 |
 | `steward_search` | 跨所有 `AGENTS.md`、插件台账与 `PLAN-*.md` 检索原文，返回 `path:line`；回答「我之前是不是说过」不靠记忆。 |
 | `steward_ledger` | 列出台账登记过的每条规则，并标注它在文件里还能不能找到（找不到 = 被手改或删了）。 |
 | `steward_change` | **改动登记**：把一次改动写成 `~/.dsh/CHANGES.md` 一行（日期 / 对象 / 改了什么 / 证据 / 回滚 / 指针），可选同时把某项目 `STATUS.md` 的「最后更新」戳成现在；`action=list` 读最近几条。 |

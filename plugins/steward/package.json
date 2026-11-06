@@ -47,6 +47,7 @@
     "client.js",
     "lib/core.js",
     "lib/plan.js",
+    "lib/decisions.js",
     "lib/timeline.js",
     "lib/change.js",
     "lib/project.js",

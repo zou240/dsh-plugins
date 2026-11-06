@@ -322,3 +322,82 @@ export function firstTickets(tickets) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------- 受控写（SPEC §13，v1.3）
+/**
+ * 动作级错误码：只经 err.code 抛出，不进 issues 数组（issues 只放解析期问题，§3.1）。
+ * 非原子：这里是纯函数，读写盘由 plan.js 的 mutateDecisions 负责；单文件 markdown 没有 CAS。
+ */
+export const DECISION_ACTION_CODES = ['DEC_NOT_FOUND', 'DEC_STATE', 'DEC_READONLY', 'DEC_INVALID_ID'];
+
+function actionErr(code, msg, extra) {
+  const e = new Error(msg);
+  e.code = code;
+  if (extra) Object.assign(e, extra);
+  return e;
+}
+
+const oneLine = (v) => String(v ?? '').replace(/\r?\n/g, ' ').trim();
+
+/** 重复 ID（受控写前必须为 0，否则改哪块都不确定） */
+export function duplicateTicketIds(tickets) {
+  const seen = new Set();
+  const dup = new Set();
+  for (const t of Array.isArray(tickets) ? tickets : []) {
+    if (seen.has(t.id)) dup.add(t.id);
+    seen.add(t.id);
+  }
+  return [...dup];
+}
+
+/** 下一个票号：取现有最大数字 +1，两位补零（不复用已删号；删票 = 改 out-of-scope） */
+export function nextTicketId(tickets) {
+  let max = 0;
+  for (const t of Array.isArray(tickets) ? tickets : []) {
+    const m = /^T-(\d+)$/.exec(String(t?.id ?? ''));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `T-${String(max + 1).padStart(2, '0')}`;
+}
+
+/** ticket：新建一张 open 票（标题/类型/问题缺失交给调用方 parse 后按新 fail 拒写） */
+export function addTicket(tickets, spec = {}) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const given = oneLine(spec.id);
+  const id = given ? given.toUpperCase() : nextTicketId(list);
+  if (!DECISION_ID_RE.test(id)) throw actionErr('DEC_INVALID_ID', `DEC_INVALID_ID 票 ID 必须形如 T-01（收到：${given || '(空)'}）`);
+  if (list.some((t) => t.id === id)) throw actionErr('DEC_DUP_ID', `DEC_DUP_ID 票 ID 已存在：${id}（文件未写）`);
+  const t = emptyTicket(id, oneLine(spec.title) || null);
+  t.type = oneLine(spec.type).toLowerCase() || null;
+  t.status = 'open';
+  t.question = oneLine(spec.question) || null;
+  t.blocked_by = [...new Set(splitList(spec.blocked_by ?? '').map((s) => s.toUpperCase()))];
+  t.links = [...new Set(splitList(spec.links ?? ''))];
+  return [...list, t];
+}
+
+/** claim：open → claimed，记 claimed_by / claimed_at（只记录，不承诺独占） */
+export function claimTicket(tickets, id, by, at) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const want = oneLine(id).toUpperCase();
+  const t = list.find((x) => x.id === want);
+  if (!t) throw actionErr('DEC_NOT_FOUND', `DEC_NOT_FOUND 没有这张票：${want || '(未给 id)'}`);
+  if (t.status !== 'open') throw actionErr('DEC_STATE', `DEC_STATE 票 ${want} 当前 status=${t.status ?? '缺失'}；只有 open 能 claim`);
+  const owner = oneLine(by);
+  if (!owner) throw actionErr('DEC_FIELD_MISSING', 'DEC_FIELD_MISSING claim 需要 claimed_by（by 参数）', { field: 'claimed_by' });
+  return list.map((x) => (x.id === want ? { ...x, status: 'claimed', claimed_by: owner, claimed_at: at } : x));
+}
+
+/** resolve：open/claimed → resolved / out-of-scope，写 resolution + resolved_at（claimed 记录保留） */
+export function resolveTicket(tickets, id, { resolution, status = 'resolved', at } = {}) {
+  const list = Array.isArray(tickets) ? tickets : [];
+  const want = oneLine(id).toUpperCase();
+  const t = list.find((x) => x.id === want);
+  if (!t) throw actionErr('DEC_NOT_FOUND', `DEC_NOT_FOUND 没有这张票：${want || '(未给 id)'}`);
+  if (!PENDING_STATUSES.includes(t.status)) throw actionErr('DEC_STATE', `DEC_STATE 票 ${want} 已是终态（${t.status ?? '缺失'}），不能重复 resolve`);
+  const st = oneLine(status).toLowerCase() || 'resolved';
+  if (!TERMINAL_STATUSES.includes(st)) throw actionErr('DEC_STATE', `DEC_STATE ticket_status 只能是 resolved / out-of-scope（收到：${st}）`);
+  const res = oneLine(resolution);
+  if (!res) throw actionErr('DEC_RESOLUTION_MISSING', 'DEC_RESOLUTION_MISSING resolve 需要 resolution（一句话决议；out-of-scope 写为什么不做）', { field: 'resolution' });
+  return list.map((x) => (x.id === want ? { ...x, status: st, resolution: res, resolved_at: at } : x));
+}

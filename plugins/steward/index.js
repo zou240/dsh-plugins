@@ -44,7 +44,19 @@ import {
   renderStatus,
 } from './lib/project.js';
 import { appendLog, listLogs } from './lib/log.js';
-import { auditAllPlans, auditPlan, getPlan, listPlans, savePlan, scaffoldPlan, updatePlan } from './lib/plan.js';
+import {
+  auditAllPlans,
+  auditPlan,
+  getPlan,
+  listPlans,
+  savePlan,
+  scaffoldPlan,
+  updatePlan,
+  initDecisions,
+  addDecisionTicket,
+  claimDecision,
+  resolveDecision,
+} from './lib/plan.js';
 import { buildTimeline, publishTimeline, renderTimelineMarkdown } from './lib/timeline.js';
 
 export const inject = ['tools', 'systemPrompt'];
@@ -314,8 +326,8 @@ const PARAMS = {
     properties: {
       action: {
         type: 'string',
-        enum: ['save', 'list', 'get', 'update', 'check', 'scaffold'],
-        description: 'save=建立或增量更新计划；list=列计划；get=读全文（含 parsed.decisions）；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾/决策票据与前沿）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）',
+        enum: ['save', 'list', 'get', 'update', 'check', 'scaffold', 'init', 'ticket', 'claim', 'resolve'],
+        description: 'save=建立或增量更新计划；list=列计划；get=读全文（含 parsed.decisions）；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾/决策票据与前沿）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）；init/ticket/claim/resolve=受控写决策票据（建节 / 加票 / 认领 / 决议；读改写非原子，不承诺独占）',
       },
       mode: {
         type: 'string',
@@ -336,6 +348,44 @@ const PARAMS = {
         type: 'string',
         description:
           'save（按需）：决策票据节内容（票块，不含「## 决策票据」标题）。每票 `### T-01 标题` + 字段行（type / status / blocked_by / question / claimed_by / claimed_at / resolution / resolved_at / links）；空串 = 空节',
+      },
+      id: {
+        type: 'string',
+        description: 'ticket/claim/resolve：票 ID（如 T-01）。ticket 省略则自动取下一个号；claim/resolve 必填',
+      },
+      ticket_title: {
+        type: 'string',
+        description: 'ticket：票标题（单行；必填）',
+      },
+      type: {
+        type: 'string',
+        enum: ['research', 'prototype', 'grilling', 'task'],
+        description: 'ticket：票类型（必填）',
+      },
+      question: {
+        type: 'string',
+        description: 'ticket：这张票要解决的决定 / 调研（单行；必填）',
+      },
+      blocked_by: {
+        type: 'string',
+        description: 'ticket：阻塞票 ID，逗号/顿号/空格分隔（如 "T-01, T-02"）；会被归一化去重',
+      },
+      links: {
+        type: 'string',
+        description: 'ticket：证据 / 原型 / 文档链接，逗号分隔',
+      },
+      by: {
+        type: 'string',
+        description: 'claim：claimed_by（人 / 会话名）。只记录，不承诺独占',
+      },
+      resolution: {
+        type: 'string',
+        description: 'resolve：决议一句话；out-of-scope 写「为什么不做」（必填）',
+      },
+      ticket_status: {
+        type: 'string',
+        enum: ['resolved', 'out-of-scope'],
+        description: 'resolve：目标终态，默认 resolved（out-of-scope = 有意不做，永不升格）',
       },
       steps: {
         type: 'array',
@@ -428,7 +478,7 @@ const TOOLS = [
   {
     name: 'steward_plan',
     description:
-      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。',
+      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。受控写四动作：init=建节、ticket=加一张 open 票（id 可自动编号）、claim=open→claimed（记 claimed_by/at）、resolve=→resolved 或 out-of-scope（写 resolution + 时间）；四个动作都是读改写、非原子，claim 只记录不承诺独占。',
     parameters: PARAMS.plan,
     isConcurrencySafe: () => false,
     run: async (args, exec, ctx) => {
@@ -487,6 +537,39 @@ const TOOLS = [
           result: r,
         };
       }
+      if (['init', 'ticket', 'claim', 'resolve'].includes(action)) {
+        let r;
+        if (action === 'init') r = initDecisions(args?.plan);
+        else if (action === 'ticket') {
+          r = addDecisionTicket(args?.plan, {
+            id: args?.id,
+            title: args?.ticket_title,
+            type: args?.type,
+            question: args?.question,
+            blocked_by: args?.blocked_by,
+            links: args?.links,
+          });
+        } else if (action === 'claim') r = claimDecision(args?.plan, args?.id, args?.by);
+        else r = resolveDecision(args?.plan, args?.id, { resolution: args?.resolution, status: args?.ticket_status });
+        const d = r.decisions;
+        const head =
+          action === 'init'
+            ? r.created
+              ? `已初始化「## 决策票据」节：${r.file}`
+              : `「## 决策票据」节已存在，未新建：${r.file}`
+            : action === 'ticket'
+              ? `已新增票 ${r.ticket.id}（open）：${r.ticket.title ?? ''}\n票：${r.file}`
+              : action === 'claim'
+                ? `已认领 ${r.ticket.id}：claimed_by=${r.ticket.claimed_by}，claimed_at=${r.ticket.claimed_at}\n票：${r.file}`
+                : `已决 ${r.ticket.id}：status=${r.ticket.status}，resolution=${r.ticket.resolution}，resolved_at=${r.ticket.resolved_at}\n票：${r.file}`;
+        const L = [
+          head,
+          `票据 open ${d.open} / claimed ${d.claimed} / resolved ${d.resolved} / out-of-scope ${d.outOfScope} / invalid ${d.invalid}${d.issues.length ? `（issues ${d.issues.length} 条）` : ''}`,
+        ];
+        if (action === 'claim') L.push('提醒：claim 只是记录，不是锁——不承诺独占，同一张票别人也可能同时写（后写覆盖先写）。');
+        if (action === 'ticket' || action === 'resolve') L.push('提醒：受控写是「读改写」，非原子；并发写入以最后一次落盘为准。');
+        return { text: L.join('\n'), result: r };
+      }
       if (action === 'save') {
         const ws = workspaceOf(ctx, exec, args?.workspace);
         if (!ws) throw new Error('save 需要 workspace（当前会话没有可用工作目录时请显式传）');
@@ -532,7 +615,7 @@ const TOOLS = [
         L.push('- 提示：改过文件的话用 steward_change 记一行（tools\\gate.cmd 会查未登记改动）');
         return { text: L.join('\n'), result: r };
       }
-      throw new Error('action 只能是 save / list / get / update');
+      throw new Error('action 只能是 save / list / get / update / check / scaffold / init / ticket / claim / resolve');
     },
   },
   {
