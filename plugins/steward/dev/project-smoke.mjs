@@ -192,11 +192,19 @@ check(/已收尾/.test(nsText) && /当前态（STATUS）/.test(nsText), '生成�
 check(nsText.includes(path.basename(ns.handoff)), 'STATUS 里指向的冻结快照文件名真实存在');
 
 console.log('=== 13. close 遇到手写文档：报错且原文零改动 ===');
-P.registerProject({ key: 'hijack', title: '被占位', source: WS, statusFile: path.join(WS, 'S-hijack.md'), handoffDir: WS });
+// 带计划一起测：拒写时不许留下孤儿 HANDOFF、也不许把计划标成 done（2026-11-07 独立验收 P1）
+const planHijack = path.join(WS, 'PLAN-hijack.md');
+fs.writeFileSync(
+  planHijack,
+  ['---', 'title: 被占位', 'status: active', '---', '', '# 被占位', '', '## 目标', 'x', '', '## 范围', 'x', '', '## 步骤', '- [ ] 1. 没做 — [High] [自做]', '', '## 验收', 'x', '', '## 风险 / 回滚', 'x', '', '## 进度记录', '- 2026-11-07 建', ''].join('\n'),
+  'utf8',
+);
+P.registerProject({ key: 'hijack', title: '被占位', source: WS, statusFile: path.join(WS, 'S-hijack.md'), handoffDir: WS, plan: planHijack });
 P.writeStatus(P.getProject('hijack'));
 const hijackFile = path.join(WS, 'S-hijack.md');
 fs.writeFileSync(hijackFile, '# 手写 STATUS\n\n别覆盖我\n', 'utf8');
 const hHand = sha(hijackFile);
+const handoffBefore = fs.readdirSync(WS).filter((n) => n.startsWith('HANDOFF-')).length;
 let handErr = '';
 try {
   P.closeProject('hijack');
@@ -206,6 +214,8 @@ try {
 check(handErr.includes('不是 koujing 生成的'), 'close 拒绝改写手写文档', handErr);
 check(sha(hijackFile) === hHand, '手写文档 sha256 未变');
 check(!P.getProject('hijack').closedAt, '失败时档案没被标成已收尾');
+check(fs.readdirSync(WS).filter((n) => n.startsWith('HANDOFF-')).length === handoffBefore, '拒写时不落孤儿 HANDOFF', `${handoffBefore} 份`);
+check(/^status: active$/m.test(fs.readFileSync(planHijack, 'utf8')), '拒写时计划状态没被改成 done');
 
 console.log('');
 if (fails.length) {

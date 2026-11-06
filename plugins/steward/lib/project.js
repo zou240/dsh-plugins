@@ -393,6 +393,9 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
   // 复盘校验放在最前面：不过就不写任何文件（HANDOFF 不留半截）
   const retroItems = normalizeRetro(retro);
   const p = getProject(key);
+  // 前置检查必须在任何写盘动作之前（2026-11-07 独立验收 P1）：STATUS 指向手写文档时，
+  // 以前 HANDOFF 已经落盘、计划也已被标 done 才在这里抛错 —— 留下孤儿快照 + 计划被改坏。
+  assertStatusTarget(p.statusFile, p.key);
   const at = stamp();
   const day = at.slice(0, 10);
   const dir = p.handoffDir || path.dirname(p.statusFile);
@@ -459,8 +462,7 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
   // 2026-11-06 修：原来只在 exists(statusFile) 时才标记，文件缺失就静默跳过，
   // 却照旧写快照 / 账本并回报「顶部已标已收尾」——下一个会话读到的是不存在的当前态。
   // 2026-11-07：改成按最终态重写（计划已 done），但既有「## 二、入口」字节原样保留 ——
-  // 收尾 / 复盘都不许动那一节（步骤 11 的验收判据）。
-  assertStatusTarget(p.statusFile, p.key);
+  // 收尾 / 复盘都不许动那一节（步骤 11 的验收判据）。目标检查已在函数开头做过。
   let statusCreated = false;
   if (!exists(p.statusFile)) {
     ensureDir(path.dirname(p.statusFile));
