@@ -295,6 +295,42 @@ ok('13.9b 正文提到 [并行] 但不在行尾 → 不告警', !aInline.issues.
 const aFull = plan.auditPlanText(mkPlan('## 并行 / 工作树\n\n- 树 A（base main）改 rules；树 B 改渲染；合并回主树复跑门禁\n\n'));
 ok('13.10 写全了不告警且 ok 不变', !aFull.issues.some((i) => i.msg.includes('并行')) && aFull.ok === true, JSON.stringify(aFull.issues));
 
+// 14 scaffold → parse → save 往返（2026-11-07 批次 0）
+// scaffold 曾写 `## 风险回滚`，而 NAME_TO_KEY 只认带分隔的两种写法：risks 为空、该节落进 extras，
+// 下次 merge 会再补一节 → 重复节；audit 又靠子串「风险」放过。这里把往返和反例都钉住。
+const sc = plan.scaffoldPlan({ workspace: WS2, title: 'demo-scaffold', goal: '验证骨架可解析', scope: '- 做：往返\n- 不做：改真实计划' });
+const sc1Text = fs.readFileSync(sc.file, 'utf8');
+const sc1 = plan.parsePlan(sc1Text);
+const sc1Audit = plan.auditPlanText(sc1Text);
+ok(
+  '14.1 scaffold 的风险节解析进 risks、不进 extras',
+  sc1.risks.includes('待补') && !sc1.extras.some((e) => /风险/.test(e.name)),
+  JSON.stringify({ risks: sc1.risks, extras: sc1.extras.map((e) => e.name) }),
+);
+ok('14.2 scaffold 文本审计无缺必填节', !sc1Audit.issues.some((i) => i.msg.includes('缺必填节')), JSON.stringify(sc1Audit.issues));
+plan.savePlan({ workspace: WS2, title: 'demo-scaffold' });
+const sc2Text = fs.readFileSync(sc.file, 'utf8');
+const sc2 = plan.parsePlan(sc2Text);
+ok(
+  '14.3 scaffold → save 往返不重复风险节',
+  (sc2Text.match(/^##\s*风险/gm) ?? []).length === 1 && sc2.risks.includes('待补') && sc2.extras.length === 0,
+  sc2Text.split('\n').filter((l) => l.startsWith('##')).join(' | '),
+);
+const legacyRiskText = mkPlan().replace('## 风险 / 回滚', '## 风险回滚');
+const legacyRisk = plan.parsePlan(legacyRiskText);
+const legacyAudit = plan.auditPlanText(legacyRiskText);
+ok(
+  '14.4 老骨架的「## 风险回滚」也能解析且审计不缺节',
+  legacyRisk.risks === 'z' && legacyRisk.extras.length === 0 && !legacyAudit.issues.some((i) => i.msg.includes('缺必填节')),
+  JSON.stringify({ risks: legacyRisk.risks, extras: legacyRisk.extras.map((e) => e.name), issues: legacyAudit.issues }),
+);
+const unknownRisk = plan.auditPlanText(mkPlan().replace('## 风险 / 回滚', '## 风险与回滚'));
+ok(
+  '14.5 认不出的风险节名 → fail（不再子串放过）',
+  unknownRisk.ok === false && unknownRisk.issues.some((i) => i.level === 'fail' && i.msg.includes('缺必填节')),
+  JSON.stringify(unknownRisk.issues),
+);
+
 console.log(out.join('\n'));
 console.log(`\n台账文件：${core.ledgerPath()}`);
 process.exit(out.some((l) => l.startsWith('FAIL')) ? 1 : 0);

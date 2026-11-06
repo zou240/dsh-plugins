@@ -71,6 +71,8 @@ const NAME_TO_KEY = {
   验收: 'accept',
   '风险 / 回滚': 'risks',
   '风险/回滚': 'risks',
+  风险回滚: 'risks', // scaffoldPlan 曾写这种（无分隔），不归一就会掉进 extras 并在下次 merge 重复
+
   进度记录: 'progress',
 };
 
@@ -509,18 +511,28 @@ export function getPlan(ref) {
 
 // ---------------------------------------------------------------- 计划质量检查 / 骨架生成（0.2.3）
 
-const REQUIRED_SECTIONS = ['目标', '范围', '步骤', '验收', '风险', '进度'];
+/** 必填节：显示名 + 规范键。判「在不在」走 keyOf 归一，不做子串匹配——
+ *  否则 `## 风险与回滚`（解析不到 risks）也会被 substring 放过，audit 绿而 parse 空。 */
+const REQUIRED_SECTIONS = [
+  ['目标', 'goal'],
+  ['范围', 'scope'],
+  ['步骤', 'steps'],
+  ['验收', 'accept'],
+  ['风险', 'risks'],
+  ['进度', 'progress'],
+];
 
 /** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾。 */
 export function auditPlanText(text) {
   const src = String(text ?? '');
   const heads = [...src.matchAll(/^##\s+(.+)$/gm)].map((m) => m[1].trim());
+  const headKeys = heads.map((h) => keyOf(h));
   const created = (src.match(/^created:\s*(\S+)/m) ?? ['', ''])[1];
   const issues = [];
   const add = (level, msg) => issues.push({ level, msg });
 
-  for (const r of REQUIRED_SECTIONS) {
-    if (!heads.some((h) => h.includes(r))) add('fail', `缺必填节：含「${r}」的一节`);
+  for (const [name, key] of REQUIRED_SECTIONS) {
+    if (!headKeys.includes(key)) add('fail', `缺必填节：含「${name}」的一节`);
   }
   const steps = [...src.matchAll(/^- \[([ xX])\]\s*(\d+)\.\s*(.+)$/gm)].map((m) => ({
     done: m[1].toLowerCase() === 'x',
@@ -624,7 +636,7 @@ export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = 
     '|---|---|---|',
     '| （待补） | （待补） | （待补） |',
     '',
-    '## 风险回滚',
+    '## 风险 / 回滚',
     '',
     '（待补：最坏会怎样、怎么退、备份在哪）',
     '',
