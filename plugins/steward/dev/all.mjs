@@ -11,10 +11,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SUITES = [
   'smoke.mjs',
   'routes.mjs',
+  'card-smoke.mjs',
   'change-smoke.mjs',
   'manage-smoke.mjs',
   'project-smoke.mjs',
   'decisions-smoke.mjs',
+  'retro-smoke.mjs',
   'atomic-race.mjs',
 ];
 

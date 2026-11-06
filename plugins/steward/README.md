@@ -33,7 +33,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 | 工具 | 做什么 / 什么时候用 |
 |---|---|
-| `steward_card` | 把一句话的要求拆成必答维度，给出该写进哪个 `AGENTS.md` 的哪一节，并列出命中的现有规则、疑似冲突和这类事最容易漏的点。会话开头先用它，**不动文件、不下结论**。 |
+| `steward_card` | 把一句话的要求拆成必答维度，给出该写进哪个 `AGENTS.md` 的哪一节，并列出命中的现有规则、疑似冲突和这类事最容易漏的点。末尾的**深问**按 grilling 口径一轮问完全部待决问题（每问带推荐答案）+ 出口判据；答完把答案带回再调一次重算下一轮（事实类问题我自己查）。只提示、不拦动作。会话开头先用它，**不动文件、不下结论**。 |
 | `steward_commit` | 把确认过的一条规则写进对应 `AGENTS.md`：先查重、写前备份、记台账，可选跑你自己的 `docs-lint` 门禁，最后回报文件与行号。 |
 | `steward_plan` | 项目计划：`save` 写 `PLAN-*.md`（`merge`/`append`/`replace` 三种更新语义）、`get`/`list` 读、`update` 勾步骤记进度；**`check`** 检查六个必填节 / 档位 / 派单标记 / 交付类「文档用法矩阵」/ 并行节 / 状态与勾选矛盾；**`scaffold`** 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 `[档位] [派单]` 占位）；**`init` / `ticket` / `claim` / `resolve`** 受控写「决策票据」节（建节 / 加票 / 认领 / 决议；读改写非原子，`claim` 只记录、不承诺独占）。 |
 | `steward_search` | 跨所有 `AGENTS.md`、插件台账与 `PLAN-*.md` 检索原文，返回 `path:line`；回答「我之前是不是说过」不靠记忆。 |
@@ -41,8 +41,9 @@ dsh plugin add ./dsh-plugins/plugins/steward
 | `steward_change` | **改动登记**：把一次改动写成 `~/.dsh/CHANGES.md` 一行（日期 / 对象 / 改了什么 / 证据 / 回滚 / 指针），可选同时把某项目 `STATUS.md` 的「最后更新」戳成现在；`action=list` 读最近几条。 |
 | `steward_timeline` | 把台账改动、报错记录、计划、规定与**改动账本**按日期串成时间线，可直接生成工作区 `TIMELINE.md`。 |
 | `steward_project` | **项目档案**：登记真源 / 生成物 / 冻结件 / 入口 / 口径 / 待办 / 门禁 / 计划（`~/.dsh/projects.json`），`show` 直接返回渲染好的当前态；所有项目文书从它派生。 |
-| `steward_handoff` | **交接与收尾**：`status` 按档案 + 计划 + 账本 + 日志重写 `STATUS.md`（一个项目只留一份当前态）；`close` 冻结 `HANDOFF-<日期>.md`、STATUS 标「已收尾」、计划标 done、账本记一行。 |
+| `steward_handoff` | **交接与收尾**：`status` 按档案 + 计划 + 账本 + 日志重写 `STATUS.md`（一个项目只留一份当前态）；`close` 冻结 `HANDOFF-<日期>.md`、STATUS 标「已收尾」、计划标 done、账本记一行；`close` 可选 `retro`：复盘候选（导航 / 自动检查 / 编码规范 / AGENTS.md / 工具经济 / 无效规则 / 信息可达 7 类 + 严重度 + 落点「改检查 / 改规则 / 改指针 / 不改」），机械问题只能落「改检查」，按严重度排序写进快照「## 九、复盘」并追加 `project.todo`，不覆盖 STATUS。 |
 | `steward_log` | **过程日志**：`~/.dsh/logs/<项目>.md`，`add` 追加运行输出 / 报错原文 / 决策理由，`list` 读最近几条；`steward_timeline` 会并入。 |
+| `steward_index` | **全要素索引**：扫全部 md 与插件 / 常驻 / 项目 / 凭据 / 生成物实体，回答「东西在哪 / 谁引用了它 / 以哪份为准 / 新文件归哪」。`rebuild` 重建、`find` 中文全文、`refs` 反向引用、`recent` 最近改动、`check` 六条一致性规则、`views` 生成 `PLANS-INDEX.md`。 |
 
 > **旧名 `koujing_*` 别名已下线（0.2.5，2026-11-06）**：11 个别名工具与 `steward_*` 同名同参，共 9,866 字符 ≈ 3.2K token，每请求都随工具表进上下文，还会干扰选工具。代码保留在 `index.js`，默认不注册；要兼容旧会话就设环境变量 `STEWARD_LEGACY_ALIASES=1` 再重启。数据路径仍是 `~/.dsh/koujing/`（目录名不改）。
 
@@ -158,7 +159,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 ## 自测
 
 ```bash
-node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 票据夹具 1–30（含受控写）/ 项目 / 并发写）
+node dev/all.mjs      # 全部自测（隔离 HOME：核心逻辑 / 路由 / 口径卡深问 / 票据夹具 1–30（含受控写）/ 项目与收尾复盘 / 并发写）
 ```
 
 ## 许可

@@ -300,8 +300,90 @@ export function writeStatus(p) {
   return { file, at, text, backup };
 }
 
+/**
+ * 收尾复盘的 7 类候选（上游 retro skill 的原样分类）+ 默认落点。
+ * `landing` 只认四种：改检查 / 改规则 / 改指针 / 不改；机械问题一律要落成检查。
+ */
+export const RETRO_CATEGORIES = [
+  { id: 'navigation', label: '导航', landing: '改指针' },
+  { id: 'checks', label: '自动检查', landing: '改检查' },
+  { id: 'standards', label: '编码规范', landing: '改检查' },
+  { id: 'agents', label: 'AGENTS.md', landing: '改规则' },
+  { id: 'economy', label: '工具经济', landing: '改指针' },
+  { id: 'noops', label: '无效规则', landing: '不改' },
+  { id: 'info', label: '信息可达', landing: '改指针' },
+];
+
+export const RETRO_SEVERITIES = ['high', 'medium', 'low'];
+const SEVERITY_LABEL = { high: '高', medium: '中', low: '低' };
+const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
+const RETRO_LANDINGS = ['改检查', '改规则', '改指针', '不改'];
+
+/**
+ * 校验并归一复盘项，按严重度从高到低排序。
+ * 在写任何文件之前调用——校验不过就抛错，不留半截 HANDOFF。
+ * @param {Array<{category:string,severity:string,finding:string,landing?:string,mechanical?:boolean,evidence?:string}>} items
+ */
+export function normalizeRetro(items) {
+  const list = Array.isArray(items) ? items : [];
+  const out = [];
+  list.forEach((it, i) => {
+    const n = i + 1;
+    const rawCat = String(it?.category ?? '').trim();
+    const cat = RETRO_CATEGORIES.find((c) => c.id === rawCat || c.label === rawCat);
+    if (!cat) {
+      throw new Error(
+        `复盘第 ${n} 条：category 只认 ${RETRO_CATEGORIES.map((c) => `${c.id}（${c.label}）`).join(' / ')}，收到「${rawCat || '空'}」`,
+      );
+    }
+    const severity = String(it?.severity ?? '').trim().toLowerCase();
+    if (!RETRO_SEVERITIES.includes(severity)) {
+      throw new Error(`复盘第 ${n} 条（${cat.label}）：severity 只能是 high / medium / low，收到「${severity || '空'}」`);
+    }
+    const finding = String(it?.finding ?? '').trim();
+    if (!finding) throw new Error(`复盘第 ${n} 条（${cat.label}）：finding 不能为空（写清发现的是什么）`);
+    const landing = String(it?.landing ?? '').trim() || cat.landing;
+    if (!RETRO_LANDINGS.includes(landing)) {
+      throw new Error(`复盘第 ${n} 条（${cat.label}）：landing 只认 ${RETRO_LANDINGS.join(' / ')}，收到「${landing}」`);
+    }
+    // 硬规则：机械问题写检查，判断题才写规则（能机器判的别写成给人看的规矩）
+    if (it?.mechanical === true && landing === '改规则') {
+      throw new Error(`复盘第 ${n} 条（${cat.label}）：机械问题要写成检查（landing=改检查），判断题才写规则`);
+    }
+    out.push({
+      category: cat.id,
+      label: cat.label,
+      severity,
+      finding,
+      landing,
+      mechanical: it?.mechanical === true,
+      evidence: String(it?.evidence ?? '').trim(),
+    });
+  });
+  return out.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+}
+
+/** 复盘项渲染成 HANDOFF 里的一节（严重度从高到低）。 */
+export function renderRetroBlock(items) {
+  const L = ['## 九、复盘（候选改进项）', ''];
+  L.push('> 按严重度从高到低；落点只有四种：改检查 / 改规则 / 改指针 / 不改。机械问题必须写检查。');
+  L.push('');
+  for (const r of items) {
+    L.push(`- [${SEVERITY_LABEL[r.severity]}] ${r.label}：${r.finding}（落点：${r.landing}${r.evidence ? `；证据：${r.evidence}` : ''}）`);
+  }
+  L.push('');
+  return L.join('\n');
+}
+
+/** 复盘项压成 project.todo 的一行（可读、可去重）。 */
+export function retroTodoLine(r) {
+  return `复盘[${SEVERITY_LABEL[r.severity]}] ${r.label}：${r.finding} → ${r.landing}`;
+}
+
 /** 收尾：冻结 HANDOFF 快照 + STATUS 标已收尾 + 计划标 done + 写一行账本。 */
-export function closeProject(key, { note = '', planDone = true } = {}) {
+export function closeProject(key, { note = '', planDone = true, retro = [] } = {}) {
+  // 复盘校验放在最前面：不过就不写任何文件（HANDOFF 不留半截）
+  const retroItems = normalizeRetro(retro);
   const p = getProject(key);
   const at = stamp();
   const day = at.slice(0, 10);
@@ -351,7 +433,8 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   if (note) head.push('', `> 收尾说明：${note}`);
   const fresh = { ...p, updated: at };
   const body = renderStatus(fresh, { closed: true, closedAt: at, handoffLabel });
-  fs.writeFileSync(handoff, [...head, '', body].join('\n'), 'utf8');
+  const tail = retroItems.length ? ['', renderRetroBlock(retroItems)] : [];
+  fs.writeFileSync(handoff, [...head, '', body, ...tail].join('\n'), 'utf8');
 
   // STATUS 是常驻当前态，收尾后必须存在并带「已收尾」指针。
   // 2026-11-06 修：原来只在 exists(statusFile) 时才标记，文件缺失就静默跳过，
@@ -390,5 +473,19 @@ export function closeProject(key, { note = '', planDone = true } = {}) {
   });
 
   updateProject(key, { status: 'done', closedAt: at, updated: at });
-  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change, issues };
+
+  // 复盘项写进 project.todo（追加、按整行去重）；STATUS 不动，所以既有「## 二、入口」字节保持原样
+  let todoAdded = [];
+  if (retroItems.length) {
+    const prevTodo = (p.todo ?? []).map(String);
+    const nextTodo = [...prevTodo];
+    for (const r of retroItems) {
+      const line = retroTodoLine(r);
+      if (!nextTodo.includes(line)) nextTodo.push(line);
+    }
+    todoAdded = nextTodo.slice(prevTodo.length);
+    if (todoAdded.length) updateProject(key, { todo: nextTodo });
+  }
+
+  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change, issues, retro: retroItems, todoAdded };
 }

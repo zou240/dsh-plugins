@@ -29,16 +29,21 @@ Start a new session and say "always give me the conclusion first". The model sho
 
 Optional: map phrases to one of your workspaces so placement suggestions get sharper — copy `domains.example.json` to `~/.dsh/koujing/domains.json` and edit. Without it the plugin works too: if the statement names a registered workspace it routes there, otherwise it falls back to user level.
 
-## The six tools
+## The eleven tools
 
 | Tool | What it does / when to use it |
 |---|---|
-| `steward_card` | Splits a one-line requirement into the questions that must be settled, suggests which `AGENTS.md` and which section it belongs to, and lists matching existing rules, suspected conflicts and the blind spot people usually miss. Use it first: **no file edits, no conclusions**. |
+| `steward_card` | Splits a one-line requirement into the questions that must be settled, suggests which `AGENTS.md` and which section it belongs to, and lists matching existing rules, suspected conflicts and the blind spot people usually miss. Its **deep-question** block asks the whole open frontier in one round (each question with a recommended answer) plus exit criteria; feed the answers back into another card call to recompute the next round (factual questions are looked up by the agent). Advice only — it never blocks an action. Use it first: **no file edits, no conclusions**. |
 | `steward_commit` | Writes a confirmed rule into the target `AGENTS.md`: dedupe, back up, record the ledger entry, optionally run your own `docs-lint` gate, then report file and line numbers. |
 | `steward_plan` | Project plans: `save` writes `PLAN-*.md` in the workspace root (6 mandatory sections, optional gap / parallel / mode sections), `get` / `list` read them, `update` ticks steps and logs progress. Update semantics are `merge` / `append` / `replace`; the default `merge` never wipes existing check marks. `init` / `ticket` / `claim` / `resolve` are controlled writes for the decision-ticket section (create / add / claim / resolve; read-modify-write is non-atomic, `claim` is a record only and promises no exclusivity). |
 | `steward_search` | Searches every `AGENTS.md`, the plugin registry and `PLAN-*.md` for the literal text and returns `path:line`, so "did I say this before?" does not rely on memory. |
 | `steward_ledger` | Lists every rule registered in the ledger and marks whether it can still be found in its file (missing = hand-edited or deleted). |
+| `steward_change` | **Change ledger**: writes one change into `~/.dsh/CHANGES.md` (date / object / what changed / evidence / rollback / pointer) and can stamp a project `STATUS.md` "last updated"; `action=list` shows recent rows. |
 | `steward_timeline` | Threads ledger changes, error records, plans and rules by date into a timeline; can write `TIMELINE.md` into a workspace. |
+| `steward_project` | **Project registry**: source of truth / outputs / frozen artifacts / entry points / rules / todo / gate / plan (`~/.dsh/projects.json`); `show` returns the rendered current state. Every project document derives from it. |
+| `steward_handoff` | **Handoff and close**: `status` rewrites `STATUS.md` from registry + plan + ledger + logs (one current-state file per project); `close` freezes `HANDOFF-<date>.md`, marks STATUS closed, sets the plan to done and writes one ledger row. `close` accepts optional `retro`: retrospective candidates (navigation / automated checks / coding standards / AGENTS.md / tool economy / no-ops / information access — 7 categories, severity, landing "add check / add rule / add pointer / do nothing"); mechanical findings may only land as a check. Items are severity-sorted into the snapshot's "## 九、复盘" section and appended to `project.todo`; STATUS is left untouched. |
+| `steward_log` | **Process log**: `~/.dsh/logs/<project>.md`; `add` appends run output / error text / decisions, `list` shows recent entries; `steward_timeline` merges it. |
+| `steward_index` | **Full-element index**: scans every md plus plugin / daemon / project / credential / artifact entities and answers "where is it / who references it / which copy is authoritative / where does a new file belong". `rebuild`, `find` (Chinese full text), `refs`, `recent`, `check` (six consistency rules), `views` (writes `PLANS-INDEX.md`). |
 
 ## Two mechanisms that do not rely on the model's goodwill
 
@@ -114,7 +119,7 @@ Three invariants:
 ## Tests
 
 ```bash
-node dev/all.mjs      # all suites against an isolated HOME (core / routes / tickets / projects / concurrent writes)
+node dev/all.mjs      # all suites against an isolated HOME (core / routes / card deep questions / tickets / projects + close retrospective / concurrent writes)
 ```
 
 ## License

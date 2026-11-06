@@ -130,6 +130,58 @@ function textOf(message) {
     .join('\n');
 }
 
+// 深问（grilling）口径：事实由 agent 查，决策留给用户。
+// 这里的 id 是「查得到答案、不该占用户时间」的维度（依赖 / 环境 / 成本 / 素材来源）。
+const FACT_DIM_IDS = new Set(['depends', 'env', 'cost', 'input']);
+
+/** 本轮 frontier：还没答案的维度 + 命中的盲点，按「事实 / 决策」分开。 */
+function frontierOf(card) {
+  const asks = [];
+  const facts = [];
+  for (const d of card.dims) {
+    if (d.status === 'given') continue;
+    const item = { id: d.id, code: `dim:${d.id}`, source: '维度', title: d.label, question: d.question, recommend: d.fallback };
+    if (FACT_DIM_IDS.has(d.id)) facts.push(item);
+    else asks.push(item);
+  }
+  for (const s of card.spots ?? []) {
+    if (s.answered) continue;
+    asks.push({ id: s.id, code: `spot:${s.id}`, source: '盲点', title: s.risk, question: s.question, recommend: s.fallback });
+  }
+  return { asks, facts };
+}
+
+/**
+ * 深问段（grilling 原文口径）：一轮问完整个 frontier，每问给推荐答案，末尾写出口判据。
+ * 只输出与提示，不做任何硬门禁——卡片永远不拦动作。
+ */
+function deepQuestionBlock(card) {
+  const { asks, facts } = frontierOf(card);
+  const L = [];
+  L.push(`深问 · 本轮 frontier（${asks.length} 问，一次问完，不逐条等）`);
+  if (!asks.length) L.push('  （空：没有悬而未决的问题）');
+  asks.forEach((q, i) => {
+    L.push(`  Q${i + 1}〔${q.source} ${q.code}〕${q.title} —— ${q.question}`);
+    L.push(`     ➡️ 推荐：${q.recommend}`);
+  });
+  if (facts.length) {
+    L.push('');
+    L.push(`先我自己查（事实类 ${facts.length} 问，不占你的时间）`);
+    for (const f of facts) L.push(`  - ${f.title}（${f.code}）：我去查（${f.question}）；查不到再按推荐值「${f.recommend}」`);
+  }
+  if (card.unknownAnswered?.length) {
+    L.push('');
+    L.push(`注意：answered 里这些 id 不认识，已忽略——${card.unknownAnswered.join(', ')}`);
+  }
+  L.push('');
+  L.push(
+    asks.length
+      ? '出口判据：本轮问题全有答案（也可说「按默认」＝全部取推荐值）→ 把答案带回再调一次 steward_card（answered 填已答的维度 / 盲点 id），重算下一轮；frontier 空即达成共识。本轮只提示，不拦任何动作。'
+      : '出口判据：frontier 已空，可以开工。',
+  );
+  return L;
+}
+
 function cardText(card) {
   const L = [];
   L.push(`口径卡 · ${KIND_LABEL[card.kind] ?? card.kind}`);
@@ -168,15 +220,19 @@ function cardText(card) {
     L.push(`你可能没想到的（${card.spots.length}）`);
     card.spots.forEach((s, i) => {
       L.push(`  ${i + 1}. ${s.risk} —— ${s.why}`);
-      L.push(`     问：${s.question}  默认：${s.fallback}`);
+      if (s.answered) L.push('     ✓ 上一轮已答（不再进本轮 frontier）');
+      else L.push(`     问：${s.question}  默认：${s.fallback}`);
     });
     L.push('');
   }
 
+  L.push(...deepQuestionBlock(card));
+  L.push('');
+
   L.push(
     card.kind === 'rule'
-      ? '下一步：把「待确认」项一次问完（或用户说「按默认」），确认后用 steward_commit 落盘。'
-      : '下一步：把「待确认」项一次问完（或用户说「按默认」），然后带着这张卡开工。',
+      ? '下一步：按上面的深问一次问完（或用户说「按默认」），确认后用 steward_commit 落盘。'
+      : '下一步：按上面的深问一次问完（或用户说「按默认」），然后带着这张卡开工。',
   );
   return L.join('\n');
 }
@@ -204,13 +260,35 @@ function buildCard(args) {
         sectionReason: '项目计划存工作区根目录的 PLAN-*.md，文件名由 steward_plan save 的 title 决定',
       }
     : { ...placement, heading: section.heading, sectionReason: section.reason };
+
+  // 深问第二轮起：answered 里的维度 / 盲点不再进 frontier（只影响本次卡的展示，不落盘）。
+  // id 带命名空间：维度 `dim:<id>`、盲点 `spot:<id>`，因为两边有重名（如 cost）；
+  // 只写裸 id 时先匹配维度，维度过都没命中才匹配盲点。
+  const answered = new Set(
+    (Array.isArray(args?.answered) ? args.answered : []).map((x) => String(x ?? '').trim()).filter(Boolean),
+  );
+  const baseDims = checklist(kind, placement, statement);
+  const dimIds = new Set(baseDims.map((d) => d.id));
+  const dimAnswered = (id) => answered.has(`dim:${id}`) || answered.has(id);
+  const spotAnswered = (id) => answered.has(`spot:${id}`) || (!dimIds.has(id) && answered.has(id));
+  const dims = baseDims.map((d) =>
+    d.status !== 'given' && dimAnswered(d.id) ? { ...d, status: 'given', value: '上一轮已答' } : d,
+  );
+  const spots = blindspotsFor(statement, kind).map((s) => (spotAnswered(s.id) ? { ...s, answered: true } : s));
+  const known = new Set([...dims.map((d) => `dim:${d.id}`), ...dims.map((d) => d.id), ...spots.map((s) => `spot:${s.id}`)]);
+  const knownSpot = new Set(spots.map((s) => s.id));
+  const unknownAnswered = [...answered].filter(
+    (x) => !known.has(x) && !(knownSpot.has(x) && !dimIds.has(x)),
+  );
+
   return {
     kind,
     statement,
     placement: finalPlacement,
-    dims: checklist(kind, placement, statement),
+    dims,
     conflicts: findConflicts(statement),
-    spots: blindspotsFor(statement, kind),
+    spots,
+    unknownAnswered,
   };
 }
 
@@ -226,6 +304,11 @@ const PARAMS = {
         default: 'auto',
       },
       workspace: { type: 'string', description: '可选：强制把落点定到某个工作区目录（绝对路径）' },
+      answered: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '深问第二轮起用：上一轮已答的 id（维度写 dim:<id> 或裸 id，盲点写 spot:<id>，如 ["accept","spot:export"]），这些不再进本轮 frontier；不填=全部重问',
+      },
     },
     required: ['statement'],
     additionalProperties: false,
@@ -304,6 +387,27 @@ const PARAMS = {
       key: { type: 'string', description: '项目 key' },
       note: { type: 'string', description: 'close 时的收尾说明（写进快照头部）' },
       planDone: { type: 'boolean', description: 'close 时是否把计划标 done，默认 true' },
+      retro: {
+        type: 'array',
+        description:
+          'close 时可选：复盘候选改进项（7 类 + 严重度 + 落点）。校验并写进 HANDOFF 快照「## 九、复盘」，同时追加到 project.todo；不覆盖 STATUS 第二节。机械问题（category=standards/checks 里的固定语法类）landing 必须改检查',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            category: {
+              type: 'string',
+              description: 'navigation=导航 / checks=自动检查 / standards=编码规范 / agents=AGENTS.md / economy=工具经济 / noops=无效规则 / info=信息可达',
+            },
+            severity: { type: 'string', description: 'high / medium / low（按严重度从高到低展示）' },
+            finding: { type: 'string', description: '发现：哪个环节、什么问题（一句话，必须能照着改）' },
+            landing: { type: 'string', description: '落点：改检查 / 改规则 / 改指针 / 不改；省略按类别默认' },
+            mechanical: { type: 'boolean', description: '是不是机械问题（固定语法 / 禁止 API / 文件位置）；机械问题只能落「改检查」' },
+            evidence: { type: 'string', description: '证据：日志行 / 命令 / 文件位置' },
+          },
+          required: ['category', 'severity', 'finding'],
+        },
+      },
     },
     required: ['action', 'key'],
     additionalProperties: false,
@@ -465,7 +569,7 @@ const TOOLS = [
   {
     name: 'steward_card',
     description:
-      '把用户的一句话变成口径卡：列出必须明确的维度、建议落点（用户级 / 哪个工作区、哪一节）、命中的现有规则、疑似冲突，以及这类事最容易漏的盲点。只读，不写文件。用户提出要求 / 规定 / 项目时先调用它。',
+      '把用户的一句话变成口径卡：列出必须明确的维度、建议落点（用户级 / 哪个工作区、哪一节）、命中的现有规则、疑似冲突，以及这类事最容易漏的盲点。只读，不写文件。末尾给「深问」：一轮问完全部待决问题（每问带推荐答案）+ 出口判据，答完把答案带回再调一次重算下一轮（answered 填已答 id）；事实类问题留给 agent 自己查。只输出与提示，不拦任何动作。用户提出要求 / 规定 / 项目时先调用它。',
     parameters: PARAMS.card,
     isConcurrencySafe: () => true,
     run: async (args) => {
@@ -791,12 +895,16 @@ const TOOLS = [
   {
     name: 'steward_handoff',
     description:
-      '项目交接与收尾：status=按项目档案 + 计划进度 + 改动账本 + 过程日志重写 STATUS.md（常驻当前态，一个项目只留一份）；close=收尾（冻结 HANDOFF-<日期>.md、STATUS 顶部标已收尾、计划标 done、账本记一行）。',
+      '项目交接与收尾：status=按项目档案 + 计划进度 + 改动账本 + 过程日志重写 STATUS.md（常驻当前态，一个项目只留一份）；close=收尾（冻结 HANDOFF-<日期>.md、STATUS 顶部标已收尾、计划标 done、账本记一行）。close 可选 retro：复盘候选改进项（7 类 + 严重度 + 落点 改检查/改规则/改指针/不改），排序后写进快照「## 九、复盘」并追加到 project.todo；机械问题只能落改检查。',
     parameters: PARAMS.handoff,
     isConcurrencySafe: () => false,
     run: async (args) => {
       if (args?.action === 'close') {
-        const r = closeProject(args?.key, { note: args?.note ?? '', planDone: args?.planDone !== false });
+        const r = closeProject(args?.key, {
+          note: args?.note ?? '',
+          planDone: args?.planDone !== false,
+          retro: args?.retro ?? [],
+        });
         const L = [
           `已收尾：${r.handoff}（今日第 ${r.seq} 份冻结件）`,
           r.statusCreated
@@ -806,6 +914,10 @@ const TOOLS = [
         ];
         if (r.seq > 1) L.push(`说明：同日已是第 ${r.seq} 次收尾，前 ${r.seq - 1} 份按 P0-3 保留不动`);
         if (r.plan) L.push(r.plan.error ? `计划未改：${r.plan.error}` : '计划已标 done');
+        if (r.retro?.length) {
+          L.push(`复盘：${r.retro.length} 条已写进快照「## 九、复盘」；新进 project.todo ${r.todoAdded?.length ?? 0} 条`);
+          for (const x of r.retro) L.push(`  [${x.severity}] ${x.label}：${x.finding} → ${x.landing}`);
+        }
         for (const i of r.issues ?? []) L.push(`[warn] ${i.msg}`);
         return { text: L.join('\n'), result: r };
       }
