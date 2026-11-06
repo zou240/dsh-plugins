@@ -359,8 +359,7 @@ const PARAMS = {
       },
       type: {
         type: 'string',
-        enum: ['research', 'prototype', 'grilling', 'task'],
-        description: 'ticket：票类型（必填）',
+        description: 'ticket：票类型（必填）——research / prototype / grilling / task；非法值由代码报 DEC_STATUS（不在 schema 里先拦）',
       },
       question: {
         type: 'string',
@@ -384,8 +383,7 @@ const PARAMS = {
       },
       ticket_status: {
         type: 'string',
-        enum: ['resolved', 'out-of-scope'],
-        description: 'resolve：目标终态，默认 resolved（out-of-scope = 有意不做，永不升格）',
+        description: 'resolve：目标终态，默认 resolved；只接受 resolved / out-of-scope（out-of-scope = 有意不做，永不升格；非法值报 DEC_STATE）',
       },
       steps: {
         type: 'array',

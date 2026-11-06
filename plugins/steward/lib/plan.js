@@ -768,15 +768,16 @@ export function assertDecisionsClosable(finalText, { oldText = null } = {}) {
 
 // ---------------------------------------------------------------- 受控写（SPEC §12，v1.3）
 
-const failKeyOf = (i) => `${i.code}|${i.ticket ?? ''}|${i.field ?? ''}`;
+const failKeyOf = (i) => `${i.code}|${i.ticket ?? ''}|${i.field ?? ''}|${i.msg ?? ''}`;
 const codeRank = (c) => {
   const i = DECISION_CODE_ORDER.indexOf(c);
   return i < 0 ? 99 : i;
 };
 
-/** 只戳 frontmatter 的 updated 行，其余字节不动（无 frontmatter 时原样返回） */
+/** 只戳 frontmatter 的 updated 行，其余字节不动（无 frontmatter 时原样返回）。
+ *  行尾按 frontmatter 自己的换行风格，别被正文的 CRLF 带偏（混合 EOL 文件）。 */
 function stampUpdated(src, day) {
-  const eol = src.includes('\r\n') ? '\r\n' : '\n';
+  const eol = (src.match(/^---(\r?\n)/) ?? [null, '\n'])[1];
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(src);
   if (!m) return src;
   const inner = m[1];
@@ -832,20 +833,24 @@ export function mutateDecisions({ ref, mutate }) {
     err.issues = introduced;
     throw err;
   }
-  // 只重建「决策票据」这一段：节首/节尾各一个空行，标点与换行沿用文件原样
+  // 只重建「决策票据」这一段：正文按规范形态；中间节与下一节之间留一个空行；
+  // 本节是最后一节时按规范收尾（不改文件前面的任何字节，也不动节外 EOF 空白）。
   const decText = nextSectionText ? nextSectionText.split('\n').join(eol) : '';
-  const region = decText ? `${eol}${decText}${eol}${eol}` : eol;
+  const region = decText ? `${eol}${decText}${eol}` : '';
   let nextBody;
   if (hit) {
-    nextBody = body.slice(0, hit.bodyStart) + region + body.slice(hit.end);
+    const after = body.slice(hit.end);
+    nextBody = body.slice(0, hit.bodyStart) + region + (after ? eol : '') + after;
   } else {
     const stepsSec = secs.find((s) => s.key === 'steps');
-    const block = `## 决策票据${eol}${region}`;
-    nextBody = stepsSec
-      ? body.slice(0, stepsSec.lineStart) + block + body.slice(stepsSec.lineStart)
-      : `${body.replace(/\s+$/, '')}${eol}${eol}${block}`;
+    if (stepsSec) {
+      const block = `## 决策票据${eol}${decText ? `${eol}${decText}${eol}${eol}` : eol}`;
+      nextBody = body.slice(0, stepsSec.lineStart) + block + body.slice(stepsSec.lineStart);
+    } else {
+      const sep = /\n$/.test(body) ? eol : `${eol}${eol}`;
+      nextBody = `${body}${sep}## 决策票据${eol}${decText ? `${eol}${decText}${eol}` : eol}`;
+    }
   }
-  nextBody = nextBody.replace(/\s+$/, '') + eol;
   const prefix = stamped.slice(0, stamped.length - body.length);
   writeAtomic(file, bom + prefix + nextBody);
   return { file, hadSection: hit !== null, changed: true, decisions: decisionSummary(nextSectionText), issues: after.issues };

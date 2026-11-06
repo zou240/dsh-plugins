@@ -688,6 +688,44 @@ const readPlan = (title) => plan.getPlan(path.join(WS, `PLAN-${title}.md`));
     crlfText.startsWith('\uFEFF') && !/(^|[^\r])\n/.test(crlfText) && crlfText.includes('### T-01 CRLF 票'),
     JSON.stringify({ bom: crlfText.startsWith('\uFEFF'), lfOnly: /(^|[^\r])\n/.test(crlfText) }),
   );
+
+  // 30.8 节外 EOF 空白不被归一（P2-1 回归）：中间节改写，文件末尾多空行原样
+  const rawEof = [
+    '---', 'title: dec-eof', 'status: active', 'created: 2026-11-07', 'updated: 2026-11-07', '---', '', '# dec-eof', '',
+    '## 目标', '', 'g', '',
+    '## 范围', '', '- 做：x', '',
+    '## 决策票据', '', '### T-01 旧票', '- type: task', '- status: open', '- question: q', '',
+    '## 步骤', '', '- [ ] 1. 甲 [High] [自做]', '- [ ] 2. 乙 [High] [自做]', '- [ ] 3. 丙 [High] [自做]', '',
+    '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-07 建立', '', '', '',
+  ].join('\n');
+  const fEof = path.join(WS, 'PLAN-dec-eof.md');
+  fs.writeFileSync(fEof, rawEof, 'utf8');
+  const eofTail = (rawEof.match(/\s*$/) ?? [''])[0];
+  plan.addDecisionTicket(fEof, { title: 'EOF 票', type: 'task', question: 'q' });
+  const eofText = fs.readFileSync(fEof, 'utf8');
+  ok(
+    '30.8 节外 EOF 空白不变（中间节改写不归一文件末尾）',
+    (eofText.match(/\s*$/) ?? [''])[0] === eofTail && eofText.includes('### T-02 EOF 票') && plan.getPlan(fEof).parsed.steps.length === 3,
+    JSON.stringify({ tailBefore: eofTail.length, tailAfter: (eofText.match(/\s*$/) ?? [''])[0].length }),
+  );
+
+  // 30.9 混合 EOL：frontmatter 的 LF 不被正文 CRLF 带偏（P2-2 回归）
+  const mixedHead = '---\ntitle: dec-mixed\nstatus: active\ncreated: 2026-11-07\nupdated: 2026-11-07\n---\n';
+  const mixedBody = [
+    '# dec-mixed', '',
+    '## 目标', '', 'g', '', '## 范围', '', '- 做：x', '',
+    '## 步骤', '', '- [ ] 1. 甲 [High] [自做]', '- [ ] 2. 乙 [High] [自做]', '- [ ] 3. 丙 [High] [自做]', '',
+    '## 验收', '', 'a', '', '## 风险 / 回滚', '', 'r', '', '## 进度记录', '', '- 2026-11-07 建立', '',
+  ].join('\r\n');
+  const fMixed = path.join(WS, 'PLAN-dec-mixed.md');
+  fs.writeFileSync(fMixed, mixedHead + '\n' + mixedBody, 'utf8');
+  plan.addDecisionTicket(fMixed, { title: '混合票', type: 'task', question: 'q' });
+  const mixedText = fs.readFileSync(fMixed, 'utf8');
+  ok(
+    '30.9 混合 EOL：frontmatter 仍 LF、正文仍 CRLF、票已写入',
+    mixedText.startsWith('---\n') && mixedText.includes('\r\n') && mixedText.includes('### T-01 混合票'),
+    JSON.stringify({ head: mixedText.slice(0, 8), crlf: mixedText.includes('\r\n') }),
+  );
 }
 
 console.log(out.join('\n'));
