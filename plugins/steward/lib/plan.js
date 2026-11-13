@@ -498,6 +498,29 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
   // 决策票据：六种形态（SPEC §6.1）。传 = 参数出现（含 ''），不传 = undefined
   const oldByKey = sectionsByKey(splitFrontmatter(raw).body);
   const oldDecisionsRaw = 'decisions' in oldByKey ? oldByKey.decisions : undefined;
+
+  // v1 只支持一节（SPEC §9）：重复的「## 决策票据」会在按首节重渲染时静默丢后面那节，
+  // 这里直接拒写（复核 P2-4，2026-11-07；不带 DEC_ 码，属格式畸形而非票据语义错误）。
+  const decisionsHeadingCount = (raw.match(/^##\s+决策票据\s*$/gm) ?? []).length;
+  if (decisionsHeadingCount > 1) {
+    throw new Error(
+      `决策票据节重复（出现 ${decisionsHeadingCount} 个「## 决策票据」）：v1 只支持一节，先手工合并再 save（文件未写）`,
+    );
+  }
+
+  // v1.4 收尾只读（SPEC §12 边界 4）：done 计划不再经通用 save 改票据节。
+  // 会改票据 = 本次传了 decisions（六种形态里只有不传才是「不动」），或 replace 把旧节删掉。
+  // 出口 = 同一次 save 传 status=active，或先 update status=active。
+  const donePlan = String(old.status ?? 'active') === 'done';
+  const touchesDecisions = decisions !== undefined || (md === 'replace' && oldDecisionsRaw !== undefined);
+  if (donePlan && touchesDecisions && status !== 'active') {
+    throw decErr(
+      'DEC_READONLY',
+      undefined,
+      'DEC_READONLY 计划已收尾（status=done）：不再改动决策票据；要改先 update status=active（或本次 save 传 status=active）',
+    );
+  }
+
   const normDecisions = decisions === undefined ? undefined : renderDecisions(parseDecisions(decisions).tickets);
   let nextDecisions;
   if (md === 'replace') {
@@ -537,9 +560,11 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
     isNew: false,
     extras: keptExtras,
   });
-  // 关闭闸门（SPEC §6.2）：审计本次 save 按 mode 处理后的最终全文；
+  // 关闭闸门（SPEC §6.2）：按**最终 status** 判——done 计划再 save（哪怕没传 status）也要过闸，
+  // 不能只看入参（v1.4 修：不传 status 时曾整段跳过）。
   // oldText = 旧「决策票据」节正文（不含标题，无该节 = null），丢票判据只走 assertDecisionsClosable
-  if (status === 'done') assertDecisionsClosable(nextText, { oldText: oldDecisionsRaw ?? null });
+  const finalStatus = status ?? old.status;
+  if (finalStatus === 'done') assertDecisionsClosable(nextText, { oldText: oldDecisionsRaw ?? null });
   writeAtomic(file, nextText);
 
   return {

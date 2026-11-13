@@ -41,7 +41,7 @@ dsh plugin add ./dsh-plugins/plugins/steward
 | `steward_change` | **改动登记**：把一次改动写成 `~/.dsh/CHANGES.md` 一行（日期 / 对象 / 改了什么 / 证据 / 回滚 / 指针），可选同时把某项目 `STATUS.md` 的「最后更新」戳成现在；`action=list` 读最近几条。 |
 | `steward_timeline` | 把台账改动、报错记录、计划、规定与**改动账本**按日期串成时间线，可直接生成工作区 `TIMELINE.md`。 |
 | `steward_project` | **项目档案**：登记真源 / 生成物 / 冻结件 / 入口 / 口径 / 待办 / 门禁 / 计划（`~/.dsh/projects.json`），`show` 直接返回渲染好的当前态；所有项目文书从它派生。 |
-| `steward_handoff` | **交接与收尾**：`status` 按档案 + 计划 + 账本 + 日志重写 `STATUS.md`（一个项目只留一份当前态）；`close` 冻结 `HANDOFF-<日期>.md`、STATUS 标「已收尾」、计划标 done、账本记一行；`close` 可选 `retro`：复盘候选（导航 / 自动检查 / 编码规范 / AGENTS.md / 工具经济 / 无效规则 / 信息可达 7 类 + 严重度 + 落点「改检查 / 改规则 / 改指针 / 不改」），机械问题只能落「改检查」，按严重度排序写进快照「## 九、复盘」并追加 `project.todo`，不覆盖 STATUS。 |
+| `steward_handoff` | **交接与收尾**：`status` 按档案 + 计划 + 账本 + 日志重写 `STATUS.md`（一个项目只留一份当前态）；`close` 冻结 `HANDOFF-<日期>.md`、STATUS 标「已收尾」、计划标 done、账本记一行；`close` 可选 `retro`：复盘候选（导航 / 自动检查 / 编码规范 / AGENTS.md / 工具经济 / 无效规则 / 信息可达 7 类 + 严重度 + 落点「改检查 / 改规则 / 改指针 / 不改」），机械问题只能落「改检查」，按严重度排序写进快照「## 九、复盘」并追加 `project.todo`，不覆盖 STATUS。**`close` 前有登记同步闸门**：项目计划 / 源目录根下文档没进 `DOCS-INDEX`、插件名没进 `~/.dsh/plugin-registry.md` 速查表时直接拒绝收尾（2026-11-10 用户拍板 A，防「写完了没登记」）。 |
 | `steward_log` | **过程日志**：`~/.dsh/logs/<项目>.md`，`add` 追加运行输出 / 报错原文 / 决策理由，`list` 读最近几条；`steward_timeline` 会并入。 |
 | `steward_index` | **全要素索引**：扫全部 md 与插件 / 常驻 / 项目 / 凭据 / 生成物实体，回答「东西在哪 / 谁引用了它 / 以哪份为准 / 新文件归哪」。`rebuild` 重建、`find` 中文全文、`refs` 反向引用、`recent` 最近改动、`check` 六条一致性规则、`views` 生成 `PLANS-INDEX.md`。 |
 

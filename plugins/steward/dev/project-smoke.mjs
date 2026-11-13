@@ -217,6 +217,96 @@ check(!P.getProject('hijack').closedAt, '失败时档案没被标成已收尾');
 check(fs.readdirSync(WS).filter((n) => n.startsWith('HANDOFF-')).length === handoffBefore, '拒写时不落孤儿 HANDOFF', `${handoffBefore} 份`);
 check(/^status: active$/m.test(fs.readFileSync(planHijack, 'utf8')), '拒写时计划状态没被改成 done');
 
+// ===== 2026-11-10 新增：close 收尾前登记同步闸门（用户拍板 A）=====
+const syncRoot = path.join(HERE, '.ws-sync');
+fs.rmSync(syncRoot, { recursive: true, force: true });
+fs.mkdirSync(syncRoot, { recursive: true });
+const mkPlan = (file, title) =>
+  fs.writeFileSync(
+    file,
+    ['---', `title: ${title}`, 'status: active', '---', '', `# ${title}`, '', '## 目标', 'x', '', '## 范围', 'x', '', '## 步骤', '- [ ] 1. a — [High] [自做]', '', '## 验收', 'x', '', '## 风险 / 回滚', 'x', '', '## 进度记录', '- x', ''].join('\n'),
+    'utf8',
+  );
+
+console.log('=== 14. close 登记同步：计划没进 DOCS-INDEX 拒绝收尾 ===');
+const ws14 = path.join(syncRoot, 'a');
+fs.mkdirSync(ws14, { recursive: true });
+fs.writeFileSync(path.join(ws14, 'DOCS-INDEX.md'), '# DOCS-INDEX\n\n## 一、计划\n\n| 文档 |\n|---|\n', 'utf8');
+const plan14 = path.join(ws14, 'PLAN-sync-14.md');
+mkPlan(plan14, 'sync14');
+P.registerProject({ key: 'sync14', title: '同步检查14', source: ws14, workspace: ws14, statusFile: path.join(ws14, 'STATUS.md'), handoffDir: ws14, plan: plan14 });
+let err14 = '';
+try {
+  P.closeProject('sync14');
+} catch (e) {
+  err14 = e.message;
+}
+check(err14.includes('没登记进 DOCS-INDEX'), '缺计划登记时拒绝收尾', err14);
+check(!P.getProject('sync14').closedAt, '拒绝时档案没被标成已收尾');
+check(!fs.readdirSync(ws14).some((n) => n.startsWith('HANDOFF-')), '拒绝时不落孤儿 HANDOFF');
+check(/^status: active$/m.test(fs.readFileSync(plan14, 'utf8')), '拒绝时计划仍 active（没被标 done）');
+check(!fs.existsSync(path.join(ws14, 'STATUS.md')), '拒绝时不生成 STATUS');
+
+console.log('=== 15. 补登记后放行 ===');
+fs.appendFileSync(path.join(ws14, 'DOCS-INDEX.md'), '\n| PLAN-sync-14.md | x |\n', 'utf8');
+const ok15 = P.closeProject('sync14', { note: '补登记后收尾' });
+check(Boolean(ok15.handoff) && fs.existsSync(ok15.handoff), '补登记后 close 成功');
+check(ok15.sync?.checkedIndex === true, '返回 sync.checkedIndex=true（说明真的查过索引）');
+
+console.log('=== 16. close 登记同步：插件没进 plugin-registry 拒绝 ===');
+const regFile = path.join(DSH, 'plugin-registry.md');
+if (!fs.existsSync(regFile)) {
+  fs.writeFileSync(regFile, '# 插件速查\n\n| 插件 | 版本 | 安装 | 源码入口 |\n|---|---|---|---|\n| `dsh-plugin-other` | 1.0.0 | link | x |\n', 'utf8');
+}
+const ws16 = path.join(syncRoot, 'b');
+fs.mkdirSync(ws16, { recursive: true });
+fs.writeFileSync(path.join(ws16, 'DOCS-INDEX.md'), '# DOCS-INDEX\n', 'utf8');
+fs.writeFileSync(path.join(ws16, 'package.json'), JSON.stringify({ name: 'dsh-plugin-sync-16', version: '1.0.0' }, null, 2), 'utf8');
+P.registerProject({ key: 'sync16', title: '同步检查16', source: ws16, workspace: ws16, statusFile: path.join(ws16, 'STATUS.md'), handoffDir: ws16 });
+let err16 = '';
+try {
+  P.closeProject('sync16');
+} catch (e) {
+  err16 = e.message;
+}
+check(err16.includes('plugin-registry'), '缺插件台账时拒绝收尾', err16);
+check(!P.getProject('sync16').closedAt, '拒绝时档案没被标成已收尾（16）');
+check(!fs.readdirSync(ws16).some((n) => n.startsWith('HANDOFF-')), '拒绝时不落孤儿 HANDOFF（16）');
+check(!fs.existsSync(path.join(ws16, 'STATUS.md')), '拒绝时不生成 STATUS（16）');
+
+console.log('=== 17. close 登记同步：新文档没登记拒绝 ===');
+const ws17 = path.join(syncRoot, 'c');
+fs.mkdirSync(ws17, { recursive: true });
+fs.writeFileSync(path.join(ws17, 'DOCS-INDEX.md'), '# DOCS-INDEX\n', 'utf8');
+P.registerProject({ key: 'sync17', title: '同步检查17', source: ws17, workspace: ws17, statusFile: path.join(ws17, 'STATUS.md'), handoffDir: ws17 });
+fs.writeFileSync(path.join(ws17, 'NOTE-sync-17.md'), '# 新文档\n', 'utf8');
+let err17 = '';
+try {
+  P.closeProject('sync17');
+} catch (e) {
+  err17 = e.message;
+}
+check(err17.includes('文档没登记'), '新文档没登记时拒绝收尾', err17);
+check(!P.getProject('sync17').closedAt, '拒绝时档案没被标成已收尾（17）');
+check(!fs.readdirSync(ws17).some((n) => n.startsWith('HANDOFF-')), '拒绝时不落孤儿 HANDOFF（17）');
+check(!fs.existsSync(path.join(ws17, 'STATUS.md')), '拒绝时不生成 STATUS（17）');
+
+console.log('=== 18. close 登记同步：台账文件不存在也拒插件项目（P2） ===');
+fs.rmSync(regFile, { force: true });
+const ws18 = path.join(syncRoot, 'd');
+fs.mkdirSync(ws18, { recursive: true });
+fs.writeFileSync(path.join(ws18, 'DOCS-INDEX.md'), '# DOCS-INDEX\n', 'utf8');
+fs.writeFileSync(path.join(ws18, 'package.json'), JSON.stringify({ name: 'dsh-plugin-sync-18', version: '1.0.0' }, null, 2), 'utf8');
+P.registerProject({ key: 'sync18', title: '同步检查18', source: ws18, workspace: ws18, statusFile: path.join(ws18, 'STATUS.md'), handoffDir: ws18 });
+let err18 = '';
+try {
+  P.closeProject('sync18');
+} catch (e) {
+  err18 = e.message;
+}
+check(err18.includes('plugin-registry'), '台账文件不存在时插件项目同样拒绝（不静默跳过）', err18);
+check(!P.getProject('sync18').closedAt, '拒绝时档案没被标成已收尾（18）');
+
 console.log('');
 if (fails.length) {
   console.log(`结果：${fails.length} 条失败`);

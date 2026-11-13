@@ -370,7 +370,7 @@ const PARAMS = {
       plan: { type: 'string', description: '计划文件路径或 PLAN-*.md 文件名' },
       statusFile: { type: 'string', description: 'STATUS.md 路径，默认 <source>\\STATUS.md' },
       handoffDir: { type: 'string', description: '收尾快照放哪，默认 <source>' },
-      gate: { type: 'string', description: '门禁命令（如 D:\\dsh\\tools\\gate.cmd）' },
+      gate: { type: 'string', description: '门禁命令（如 <工作区>\\tools\\gate.cmd）' },
       entry: { type: 'array', items: { type: 'string' }, description: '入口命令清单' },
       rules: { type: 'array', items: { type: 'string' }, description: '口径要点' },
       outputs: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '生成物：[{name,path,note}]' },
@@ -540,7 +540,7 @@ const PARAMS = {
       },
       query: { type: 'string', description: 'find 的检索词；refs / explain 的目标（文件路径、id 或标题片段）' },
       days: { type: 'integer', description: 'recent：看最近几天，默认 7' },
-      write: { type: 'boolean', description: 'views：true=写入 D:\\dsh\\PLANS-INDEX.md' },
+      write: { type: 'boolean', description: 'views：true=写入 <工作区>/PLANS-INDEX.md' },
       json: { type: 'boolean', description: '输出机器可读 JSON' },
     },
     required: ['action'],
@@ -818,7 +818,7 @@ const TOOLS = [
         r.line,
       ];
       if (r.status) L.push(r.status.ok ? `STATUS 已戳：${r.status.file} → ${r.status.at}` : `STATUS 未改：${r.status.note}（${r.status.file}）`);
-      L.push('提示：出包 / 改规则后跑 `D:\\dsh\\tools\\gate.cmd` 复核（未登记改动或断链会 exit 1）。');
+      L.push('提示：出包 / 改规则后跑工作区 `tools\\gate.cmd` 复核（未登记改动或断链会 exit 1）。');
       return { text: L.join('\n'), result: r };
     },
   },
@@ -1038,7 +1038,8 @@ function kbCandidates(ctx, exec) {
     if (up === dir) break;
     dir = up;
   }
-  out.push('D:\\dsh\\tools\\kb.mjs');
+  // 最后兜底用进程 cwd（不写死本机绝对路径）
+  out.push(path.join(process.cwd(), 'tools', 'kb.mjs'));
   return out;
 }
 

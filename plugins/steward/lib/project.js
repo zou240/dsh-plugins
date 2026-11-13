@@ -12,6 +12,7 @@ import { listLogs } from './log.js';
 import { getPlan, updatePlan, resolvePlan, parsePlan, assertDecisionsClosable } from './plan.js';
 
 const REG = path.join(DSH, 'projects.json');
+const REGISTRY = path.join(DSH, 'plugin-registry.md');
 
 /** 写前留一份备份：`~/.dsh/koujing/backups/<tag>-<文件名>-<时间戳>.bak`。 */
 function backupFile(file, tag) {
@@ -388,6 +389,79 @@ function sectionSlice(text, from, to) {
   return j < 0 ? text.slice(i) : text.slice(i, j);
 }
 
+/** 收尾同步检查时视为「由别的体系管理 / 本身是索引、不必进 DOCS-INDEX」的文件。 */
+const CLOSE_SYNC_EXCLUDE = /^(STATUS\.md|DOCS-INDEX\.md|PLANS-INDEX\.md|README[^\\/]*\.md|CHANGELOG[^\\/]*\.md|LICENSE[^\\/]*|HANDOFF-.*\.md)$/i;
+
+/**
+ * 收尾前的登记同步检查（2026-11-10 用户拍板 A）：
+ * 收尾前确认「写的东西都登记过」，缺了直接拒绝收尾 —— 防止再现「写完了却没进索引 / 台账」的存量。
+ *   1) 计划：DOCS-INDEX 必须含 plan 文件名；
+ *   2) 插件：source/package.json 的 name 是 dsh-plugin-* / @local/* 时，plugin-registry 速查表必须含它；
+ *   3) 文档：source 根目录下的 .md 必须在 DOCS-INDEX 里出现
+ *      （STATUS / HANDOFF / README / CHANGELOG / LICENSE / DOCS-INDEX / PLANS-INDEX 除外）。
+ *      全量查而不是按 mtime 查：项目 updated 是分钟精度，按时间比会把同一分钟内的文件漏掉或误判。
+ * DOCS-INDEX 按「项目 workspace → source 父目录」找；找不到视为非本机约定工作区，跳过该组检查（不误伤）。
+ * 放在任何写盘动作之前：不过就不写 HANDOFF / 不标计划 done / 不记账。
+ */
+export function assertCloseSync(p) {
+  const problems = [];
+  const source = String(p.source ?? '');
+  const ws = p.workspace ? String(p.workspace) : path.dirname(source);
+  const idxFile =
+    [path.join(ws, 'DOCS-INDEX.md'), path.join(path.dirname(source), 'DOCS-INDEX.md')].find((f) => exists(f)) ?? null;
+  const idxText = idxFile ? readText(idxFile) : null;
+
+  if (idxText !== null) {
+    // 1) 计划登记
+    if (p.plan) {
+      const planBase = path.basename(String(p.plan));
+      if (!idxText.includes(planBase)) {
+        problems.push(`计划「${planBase}」没登记进 DOCS-INDEX（先补 §一 一行再收尾）`);
+      }
+    }
+    // 3) 文档登记：source 根目录全量查（不递归），生成的当前态 / 交接件 / 包说明类除外
+    if (exists(source)) {
+      let entries = [];
+      try {
+        entries = fs.readdirSync(source, { withFileTypes: true });
+      } catch {
+        entries = [];
+      }
+      const unfiled = entries
+        .filter((e) => e.isFile() && /\.md$/i.test(e.name) && !CLOSE_SYNC_EXCLUDE.test(e.name))
+        .map((e) => e.name)
+        .filter((name) => !idxText.includes(name));
+      if (unfiled.length) {
+        problems.push(`文档没登记进 DOCS-INDEX：${unfiled.join('、')}（补 §二/§三/§四 一行再收尾）`);
+      }
+    }
+  }
+
+  // 2) 插件台账（独立于 DOCS-INDEX：台账在 ~/.dsh）
+  //    台账文件不存在也要报（2026-11-10 独立复核 P2）：插件名认不出来才跳过，不是「台账没有就当过」。
+  const pkgFile = path.join(source, 'package.json');
+  if (exists(pkgFile)) {
+    let name = '';
+    try {
+      name = String(JSON.parse(readText(pkgFile))?.name ?? '');
+    } catch {
+      name = '';
+    }
+    if (/^(dsh-plugin-|@local\/)/.test(name)) {
+      const regText = exists(REGISTRY) ? readText(REGISTRY) : '';
+      const bare = name.replace(/^@local\//, '');
+      if (!regText.includes(name) && !regText.includes(bare)) {
+        problems.push(`插件「${name}」没登记进 ~/.dsh/plugin-registry.md 速查表（补版本 / 安装 / 入口一行）`);
+      }
+    }
+  }
+
+  if (problems.length) {
+    throw new Error(`收尾被拒（登记同步未过）：${problems.join('；')}`);
+  }
+  return { checkedIndex: Boolean(idxFile), indexFile: idxFile };
+}
+
 /** 收尾：冻结 HANDOFF 快照 + STATUS 标已收尾 + 计划标 done + 写一行账本。 */
 export function closeProject(key, { note = '', planDone = true, retro = [] } = {}) {
   // 复盘校验放在最前面：不过就不写任何文件（HANDOFF 不留半截）
@@ -396,6 +470,8 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
   // 前置检查必须在任何写盘动作之前（2026-11-07 独立验收 P1）：STATUS 指向手写文档时，
   // 以前 HANDOFF 已经落盘、计划也已被标 done 才在这里抛错 —— 留下孤儿快照 + 计划被改坏。
   assertStatusTarget(p.statusFile, p.key);
+  // 收尾同步检查（2026-11-10）：计划 / 新文档 / 插件没登记就先拒，同样必须在写盘之前。
+  const sync = assertCloseSync(p);
   const at = stamp();
   const day = at.slice(0, 10);
   const dir = p.handoffDir || path.dirname(p.statusFile);
@@ -504,5 +580,5 @@ export function closeProject(key, { note = '', planDone = true, retro = [] } = {
     if (todoAdded.length) updateProject(key, { todo: nextTodo });
   }
 
-  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change, issues, retro: retroItems, todoAdded };
+  return { handoff, seq, statusFile: p.statusFile, statusCreated, plan, change, issues, sync, retro: retroItems, todoAdded };
 }

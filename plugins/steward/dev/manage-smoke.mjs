@@ -45,7 +45,7 @@ const reg = registerProject({
   plan: planFile,
   statusFile: path.join(WS, 'STATUS.md'),
   handoffDir: WS,
-  gate: 'D:\\dsh\\tools\\gate.cmd',
+  gate: path.join(WS, 'tools', 'gate.cmd'),
   entry: ['双击 入口.bat', '入口.bat "源" -Copy'],
   rules: ['本体直跑，不复制'],
   outputs: [{ name: '成品', path: path.join(WS, 'out') }],
