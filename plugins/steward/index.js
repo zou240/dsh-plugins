@@ -257,7 +257,7 @@ function buildCard(args) {
         isPlan: true,
         file: placement.wsPath ? path.join(placement.wsPath, 'PLAN-<名字>.md') : '（先确定工作区，save 时用 workspace 指定）',
         heading: '',
-        sectionReason: '项目计划存工作区根目录的 PLAN-*.md，文件名由 steward_plan save 的 title 决定',
+        sectionReason: '项目计划写成 PLAN-*.md：工作区根 / 项目目录 / docs\\_common 均可（listPlans 全扫），文件名由 title 决定',
       }
     : { ...placement, heading: section.heading, sectionReason: section.reason };
 
@@ -439,7 +439,7 @@ const PARAMS = {
         description:
           'save：更新语义。merge（默认，已存在的计划一律用它）=未传的节原样保留、传了的节整段替换、steps 按精确文字并入（没传的旧步骤与勾选保留）；append=传了的节追加到节末、steps 只追加不改文案；replace=整篇重写（未传的必填节填空、按需节删除、手写小节丢弃）',
       },
-      workspace: { type: 'string', description: '工作区绝对路径；save 省略时用当前会话的工作目录' },
+      workspace: { type: 'string', description: '工作区绝对路径；也可传项目目录 / docs\\_common；save 省略时用当前会话的工作目录' },
       title: { type: 'string', description: 'save：计划标题（决定文件名 PLAN-<标题>.md）' },
       goal: { type: 'string', description: 'save：目标与成功标准' },
       gap: {
@@ -580,7 +580,7 @@ const TOOLS = [
   {
     name: 'steward_plan',
     description:
-      '项目计划：save 把口径卡写成工作区根目录的 PLAN-<名字>.md（可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。受控写四动作：init=建节、ticket=加一张 open 票（id 可自动编号）、claim=open→claimed（记 claimed_by/at）、resolve=→resolved 或 out-of-scope（写 resolution + 时间）；四个动作都是读改写、非原子，claim 只记录不承诺独占。',
+      '项目计划：save 把口径卡写成 PLAN-<名字>.md（工作区根 / 项目目录 / docs\\_common 均可，list 全扫；可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。受控写四动作：init=建节、ticket=加一张 open 票（id 可自动编号）、claim=open→claimed（记 claimed_by/at）、resolve=→resolved 或 out-of-scope（写 resolution + 时间）；四个动作都是读改写、非原子，claim 只记录不承诺独占。',
     parameters: PARAMS.plan,
     isConcurrencySafe: () => false,
     run: async (args, exec, ctx) => {

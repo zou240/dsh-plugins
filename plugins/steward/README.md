@@ -115,6 +115,13 @@ dsh plugin add ./dsh-plugins/plugins/steward
 
 `check` 对并行节**只告警不阻断**：节空、没写树归属（主树 / 树名）、或步骤标了 `[并行]` 却没有这节，各给一条 warn；已收尾（`status: done`）的计划不提示。
 
+## 计划存在哪（0.3.0，2026-11-21）
+
+- **有项目的计划**：跟项目走——`projects.json` 里该项目的 `plan` 绝对路径，或 `source` / `handoffDir` 目录下的 `PLAN-*.md`。
+- **无项目的计划**：工作区根、`docs\_common\`（跨项目）或 `docs\<主题>\`。
+- `list` / `timeline` / `get` / `update` 都扫上面全部位置（`lib/plan.js` 的 `listPlans()`），按绝对路径去重。
+- `save` 的 `workspace` 参数可以直接传项目目录或 `docs\_common`。
+
 ## 计划的三种更新模式（`save` 的 `mode`）
 
 | mode | 未传的节 | 传了的节 | `steps` | 手写小节 |

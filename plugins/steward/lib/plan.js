@@ -1,5 +1,6 @@
 /**
- * 项目计划：存到工作区根目录的 PLAN-<名字>.md，模型随时可读、用户可直接打开。
+ * 项目计划：写成 PLAN-<名字>.md——有项目的放项目目录（projects.json 的 plan / source / handoffDir），
+ * 无项目的放工作区根、docs\_common\ 或 docs\<主题>\；listPlans 全部扫到（2026-11-21 用户口径）。
  *
  * 文件结构（固定，便于机器解析）：
  *   ---
@@ -27,7 +28,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { exists, workspaces } from './core.js';
+import { exists, readText, DSH, workspaces } from './core.js';
 import {
   parseDecisions,
   renderDecisions,
@@ -230,25 +231,83 @@ export function planFiles(ws) {
   }
 }
 
-export function listPlans() {
+const PROJECTS_FILE = path.join(DSH, 'projects.json');
+
+/**
+ * 项目档案里的 PLAN（2026-11-21 用户口径：plan 跟项目走）。
+ * 来源：projects.json 每项的 plan 绝对路径 + source / handoffDir 目录下的 PLAN-*.md。
+ */
+function projectPlanFiles() {
   const out = [];
+  let j;
+  try {
+    j = JSON.parse(readText(PROJECTS_FILE));
+  } catch {
+    return out;
+  }
+  for (const rec of Object.values(j?.projects ?? {})) {
+    if (!rec || typeof rec !== 'object') continue;
+    const ws = rec.workspace
+      ? String(rec.workspace)
+      : rec.source
+        ? path.dirname(String(rec.source))
+        : '';
+    if (rec.plan && exists(String(rec.plan))) out.push({ file: String(rec.plan), workspace: ws });
+    for (const d of [rec.source, rec.handoffDir]) {
+      if (!d || !exists(String(d))) continue;
+      for (const f of planFiles(String(d))) out.push({ file: f, workspace: ws });
+    }
+  }
+  return out;
+}
+
+/** 工作区 docs\ 下的通用 / 主题目录：docs\ 自身、docs\_common\、docs\<主题>\。 */
+function docsPlanFiles(ws) {
+  const out = [];
+  const root = path.join(ws, 'docs');
+  if (!exists(root)) return out;
+  const dirs = [root];
+  try {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+      if (e.isDirectory()) dirs.push(path.join(root, e.name));
+    }
+  } catch {
+    /* 读不到就只扫 docs 根 */
+  }
+  for (const d of dirs) for (const f of planFiles(d)) out.push({ file: f, workspace: ws });
+  return out;
+}
+
+export function listPlans() {
+  const seen = new Set();
+  const rows = [];
+  const push = (file, workspace) => {
+    const key = path.resolve(file).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push({ file, workspace });
+  };
   for (const w of workspaces()) {
-    for (const file of planFiles(w.path)) {
-      try {
-        const p = parsePlan(fs.readFileSync(file, 'utf8'));
-        out.push({
-          file,
-          workspace: w.path,
-          title: p.title || path.basename(file, '.md'),
-          status: p.status,
-          updated: p.meta.updated || '',
-          steps: p.steps.length,
-          doneSteps: p.steps.filter((s) => s.done).length,
-          goal: p.goal.split(/\r?\n/)[0] ?? '',
-        });
-      } catch {
-        /* 跳过坏文件 */
-      }
+    for (const file of planFiles(w.path)) push(file, w.path);
+    for (const r of docsPlanFiles(w.path)) push(r.file, w.path);
+  }
+  for (const r of projectPlanFiles()) push(r.file, r.workspace || path.dirname(r.file));
+  const out = [];
+  for (const r of rows) {
+    try {
+      const p = parsePlan(fs.readFileSync(r.file, 'utf8'));
+      out.push({
+        file: r.file,
+        workspace: r.workspace,
+        title: p.title || path.basename(r.file, '.md'),
+        status: p.status,
+        updated: p.meta.updated || '',
+        steps: p.steps.length,
+        doneSteps: p.steps.filter((s) => s.done).length,
+        goal: p.goal.split(/\r?\n/)[0] ?? '',
+      });
+    } catch {
+      /* 跳过坏文件 */
     }
   }
   return out.sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
