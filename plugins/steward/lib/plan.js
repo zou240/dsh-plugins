@@ -110,6 +110,7 @@ const NAME_TO_KEY = {
   差距对照: 'gap',
   决策票据: 'decisions',
   范围: 'scope',
+  打包与发布物: 'release',
   步骤: 'steps',
   '并行 / 工作树': 'parallel',
   '并行/工作树': 'parallel',
@@ -141,6 +142,8 @@ const SECTIONS = [
   { key: 'goal', name: '目标', required: true },
   { key: 'gap', name: '差距对照', optional: true },
   { key: 'scope', name: '范围', required: true },
+  // 2026-11-21 用户口径：交付类计划必须回答「版本绑定 / 源码归仓 / 发布闸门」，骨架默认带三行
+  { key: 'release', name: '打包与发布物', optional: true },
   { key: 'decisions', name: '决策票据', optional: true, special: true },
   { key: 'steps', name: '步骤', required: true },
   { key: 'parallel', name: '并行 / 工作树', optional: true },
@@ -152,6 +155,27 @@ const SECTIONS = [
 const SECTION_BY_KEY = Object.fromEntries(SECTIONS.map((s) => [s.key, s]));
 /** save 会写回的节（步骤单独走 mergeSteps，进度只由 update 追加，决策票据单独走六形态） */
 const SAVE_KEYS = SECTIONS.filter((s) => !s.special && s.key !== 'steps' && s.key !== 'progress').map((s) => s.key);
+
+/** 新计划三项的原文（2026-11-21 用户口径，照抄别改写；scaffold 与 save 新建共用） */
+const QUALITY_FIRST =
+  '**质量优先**：口径 / 验收 / 证据按质量完成度定，成本与速度排后；质量 = 正确 + 完整 + 可验证，不含装饰。成本约束与质量冲突时，按下面顺序让位：……';
+const RELEASE_TABLE = [
+  '| 项 | 口径 |',
+  '|---|---|',
+  '| 版本绑定 | `package.json` 的 `engines.dsh` 用单条范围（如 `">=0.2.1-rc.1 <0.3.0"`），不写死具体 rc；不枚举 `@deepseek-ai/*` peer；零依赖插件 → 升 DSH 不改插件 |',
+  '| 源码归仓 | 未发布 → 私有仓 `dsh-plugins-private`（`zou240/dsh-plugins-private`）；禁止进公开仓；推远端前经用户点头 |',
+  '| 发布闸门 | 发布前逐项核：版本号已升、`engines.dsh` 范围已核、发布物清单齐、脱敏与许可证齐；推远端前经用户点头（不发布则写「仅本地」） |',
+].join('\n');
+/** 三条新判据只对新计划生效：created 到 2026-11-21，或文件 mtime 在本次改动落地之后（不回溯旧正文） */
+const NEW_PLAN_RULE_FROM = '2026-11-21';
+const NEW_PLAN_RULE_MTIME_FLOOR = Date.parse('2026-11-21T17:00:00+08:00');
+
+/** 新计划目标统一以质量优先句开头；已经写过则不重复（只用于新建，不改已有计划正文）。 */
+function withQualityFirst(goal) {
+  const g = String(goal ?? '').trim();
+  if (!g) return `${QUALITY_FIRST}\n\n（待补：做完算什么成功，一句可验收的话）`;
+  return g.includes('质量优先') ? g : `${QUALITY_FIRST}\n\n${g}`;
+}
 
 /** 按 key 取首个同名节的正文；没出现就不在 map 里（区分「没写」与「写空了」） */
 function sectionsByKey(body) {
@@ -328,7 +352,7 @@ export function resolvePlan(ref) {
   throw new Error(`没找到计划：${r}。可用 steward_plan list 看现有计划`);
 }
 
-function render({ title, goal, gap, scope, decisionsText, steps, parallel, modes, accept, risks, status, created, progress, isNew, extras }) {
+function render({ title, goal, gap, scope, release, decisionsText, steps, parallel, modes, accept, risks, status, created, progress, isNew, extras }) {
   const now = stampDate();
   const L = [
     '---',
@@ -346,6 +370,7 @@ function render({ title, goal, gap, scope, decisionsText, steps, parallel, modes
     goal: () => (goal ? String(goal).trim() : '（待补）'),
     gap: () => (gap !== undefined ? (gap ? String(gap).trim() : '（待补）') : null),
     scope: () => (scope ? String(scope).trim() : '- 做：\n- 不做：'),
+    release: () => (release !== undefined ? (release ? String(release).trim() : '（待补）') : null),
     steps: () =>
       steps && steps.length
         ? steps.map((s, i) => `- [${s.done ? 'x' : ' '}] ${i + 1}. ${s.text}`)
@@ -469,7 +494,7 @@ function decErr(code, tickets, message) {
   return e;
 }
 
-export function savePlan({ workspace, title, goal, gap, scope, decisions, steps, parallel, modes, accept, risks, status, mode, progress }) {
+export function savePlan({ workspace, title, goal, gap, scope, release, decisions, steps, parallel, modes, accept, risks, status, mode, progress }) {
   // 2026-11-04：save 曾经静默丢掉 progress（复盘 A4），改成直接报错指回 update
   if (progress !== undefined && String(progress).trim()) {
     throw new Error('save 不写进度记录：请改用 steward_plan action=update（save 只写节与步骤）');
@@ -488,9 +513,10 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
     if (md === 'append' && !newDecisionsText) newDecisionsText = undefined;
     const nextText = render({
       title,
-      goal,
+      goal: withQualityFirst(goal),
       gap,
       scope,
+      release: release === undefined ? RELEASE_TABLE : release,
       decisionsText: newDecisionsText,
       steps: incomingSteps,
       parallel,
@@ -543,7 +569,7 @@ export function savePlan({ workspace, title, goal, gap, scope, decisions, steps,
     return next;
   };
 
-  const incomingByKey = { goal, gap, scope, parallel, modes, accept, risks };
+  const incomingByKey = { goal, gap, scope, release, parallel, modes, accept, risks };
   const nextByKey = {};
   for (const key of SAVE_KEYS) nextByKey[key] = resolve(key, incomingByKey[key], Boolean(SECTION_BY_KEY[key].required));
 
@@ -719,18 +745,34 @@ export function getPlan(ref) {
 
 // ---------------------------------------------------------------- 计划质量检查 / 骨架生成（0.2.3）
 
-/** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾。
+/** 检查一份计划文本：必填节、档位、派单标记、交付类是否带「文档用法矩阵」、状态与勾选是否矛盾；
+ *  2026-11-21 起的新计划另查质量优先 / engines.dsh / 源码归仓（缺则 WARN，不阻断）。
  *  节的存在性与正文都从同一个节模型取（不各写一遍正则，避免 audit 绿而 parse 空）。 */
-export function auditPlanText(text) {
+export function auditPlanText(text, opts = {}) {
   const src = String(text ?? '');
   const { body } = splitFrontmatter(src);
   const byKey = sectionsByKey(body);
   const created = (src.match(/^created:\s*(\S+)/m) ?? ['', ''])[1];
   const issues = [];
-  const add = (level, msg) => issues.push({ level, msg });
+  const add = (level, msg, code) => issues.push(code ? { level, code, msg } : { level, msg });
 
   for (const s of SECTIONS) {
     if (s.required && !(s.key in byKey)) add('fail', `缺必填节：含「${s.short ?? s.name}」的一节`);
+  }
+  // 2026-11-21 三项机检：缺则 WARN、不阻断；只对新计划生效（created 到 2026-11-21，或本次改动后 mtime），
+  // 不回溯 68 份旧计划正文。措辞带「怎么补」，让人知道往哪节写。
+  const mtimeMs = Number(opts?.mtimeMs) || 0;
+  const isNewRulePlan = (created && created >= NEW_PLAN_RULE_FROM) || (mtimeMs > 0 && mtimeMs >= NEW_PLAN_RULE_MTIME_FLOOR);
+  if (isNewRulePlan) {
+    if (!/质量优先/.test(src)) {
+      add('warn', '缺「质量优先」句：在「## 目标」开头写质量优先（口径 / 验收 / 证据按质量完成度定，成本与速度排后）', 'PLAN_QUALITY_FIRST');
+    }
+    if (!/engines\.dsh/i.test(src)) {
+      add('warn', '缺版本绑定：在「## 打包与发布物」写 `engines.dsh` 单条范围，不写死具体 rc、不枚举 `@deepseek-ai/*` peer', 'PLAN_ENGINES_DSH');
+    }
+    if (!/dsh-plugins-private|私有仓/i.test(src)) {
+      add('warn', '缺源码归仓：在「## 打包与发布物」写未发布进 `dsh-plugins-private` / 已发布进公开仓（推远端前经用户点头）', 'PLAN_SOURCE_REPO');
+    }
   }
   // 只认「步骤」节里的编号步骤（历史上 audit 全文扫，会把别的小节算进来）
   const steps = [];
@@ -999,7 +1041,13 @@ export function resolveDecision(ref, id, { resolution, status } = {}) {
 
 export function auditPlan(ref) {
   const r = getPlan(ref);
-  return { file: r.file, ...auditPlanText(r.text) };
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(r.file).mtimeMs;
+  } catch {
+    /* 文件刚被删也照常审文本；mtime=0 → 只按 created 判新计划 */
+  }
+  return { file: r.file, ...auditPlanText(r.text, { mtimeMs }) };
 }
 
 export function auditAllPlans() {
@@ -1013,7 +1061,8 @@ export function auditAllPlans() {
   });
 }
 
-/** 生成计划骨架：六个必填节 + 交付类默认带「文档用法矩阵」+ 步骤占位（含档位/派单标记）。
+/** 生成计划骨架：六个必填节 + 交付类默认带「文档用法矩阵」+ 步骤占位（含档位/派单标记）
+ *  + 目标里的质量优先句 + `## 打包与发布物` 三行（2026-11-21：新计划不用想起来也会带上）。
  *  正文由 render 统一产出（节名/顺序跟着 SECTIONS 走），保证 scaffold → parse 往返没有手写节。 */
 export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = [] }) {
   if (!workspace) throw new Error('需要 workspace');
@@ -1028,8 +1077,9 @@ export function scaffoldPlan({ workspace, title, goal = '', scope = '', steps = 
   }));
   const text = render({
     title,
-    goal: goal || '（待补：做完算什么成功，一句可验收的话）',
+    goal: withQualityFirst(goal),
     scope: scope || '做：（待补）\n\n不做：（待补）',
+    release: RELEASE_TABLE,
     steps: stepList,
     accept: [
       '（待补：逐条可执行的判据；交付类补「文档用法矩阵」）',

@@ -431,7 +431,7 @@ const PARAMS = {
       action: {
         type: 'string',
         enum: ['save', 'list', 'get', 'update', 'check', 'scaffold', 'init', 'ticket', 'claim', 'resolve'],
-        description: 'save=建立或增量更新计划；list=列计划；get=读全文（含 parsed.decisions）；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾/决策票据与前沿）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 带标记的步骤占位）；init/ticket/claim/resolve=受控写决策票据（建节 / 加票 / 认领 / 决议；读改写非原子，不承诺独占）',
+        description: 'save=建立或增量更新计划；list=列计划；get=读全文（含 parsed.decisions）；update=标步骤/改状态/记进度；check=检查计划质量（必填节/档位/派单/文档用法矩阵/并行节/状态矛盾/决策票据与前沿；2026-11-21 起的新计划另查质量优先/engines.dsh/源码归仓，缺则 WARN 不阻断）；scaffold=生成计划骨架（六节 + 文档用法矩阵 + 质量优先句 + 打包与发布物三行 + 带标记的步骤占位）；init/ticket/claim/resolve=受控写决策票据（建节 / 加票 / 认领 / 决议；读改写非原子，不承诺独占）',
       },
       mode: {
         type: 'string',
@@ -448,6 +448,11 @@ const PARAMS = {
           'save（按需）：差距对照——对标某个方案/竞品时，逐项写「它有什么 / 我们现状 / 判定（缺·弱·相当·我们更强·不做）/ 落点」，只在补齐、选型、移植类项目加',
       },
       scope: { type: 'string', description: 'save：范围（做 / 不做）' },
+      release: {
+        type: 'string',
+        description:
+          'save（按需）：打包与发布物——版本绑定（`engines.dsh` 单条范围）、源码归仓（未发布进私有仓 / 已发布进公开仓）、发布闸门；scaffold 与 save 新建计划默认自带这三行',
+      },
       decisions: {
         type: 'string',
         description:
@@ -580,7 +585,7 @@ const TOOLS = [
   {
     name: 'steward_plan',
     description:
-      '项目计划：save 把口径卡写成 PLAN-<名字>.md（工作区根 / 项目目录 / docs\\_common 均可，list 全扫；可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。受控写四动作：init=建节、ticket=加一张 open 票（id 可自动编号）、claim=open→claimed（记 claimed_by/at）、resolve=→resolved 或 out-of-scope（写 resolution + 时间）；四个动作都是读改写、非原子，claim 只记录不承诺独占。',
+      '项目计划：save 把口径卡写成 PLAN-<名字>.md（工作区根 / 项目目录 / docs\\_common 均可，list 全扫；可回读、可交接）；已存在的计划用 save + mode=merge 增量改（只传变化的那几节/新步骤，旧内容与勾选保留，不要整篇重写），mode=append 往节末追加、mode=replace 才整篇覆盖；list 列现有计划；get 读全文；update 勾步骤 / 改状态 / 记进度；check 检查计划质量（六个必填节 / 档位 / 派单标记 / 交付类是否带「文档用法矩阵」/ 并行节 / 状态与勾选矛盾；2026-11-21 起的新计划另查质量优先 / `engines.dsh` / 源码归仓，缺则 WARN 不阻断）；scaffold 生成骨架（六节齐全、交付类自带用法矩阵、质量优先句、打包与发布物三行、步骤带 [档位] [派单] 占位）。必填节：目标 / 范围 / 步骤 / 验收 / 风险回滚；按需节：gap=差距对照、release=打包与发布物（版本绑定 / 源码归仓 / 发布闸门）、parallel=并行/工作树（列可并行步骤、树名与基线、合并回主树顺序）、modes=执行档位。开始或接着做一个多步项目时先 get 或 check 一次。可选节「决策票据」：save 用 decisions 参数传票块（`### T-01 标题` + type/status/question 等字段行，不含节标题），get 返回 parsed.decisions（tickets/frontier/issues），check 额外给票据计数与前沿；关闭计划时未决票会拦住。受控写四动作：init=建节、ticket=加一张 open 票（id 可自动编号）、claim=open→claimed（记 claimed_by/at）、resolve=→resolved 或 out-of-scope（写 resolution + 时间）；四个动作都是读改写、非原子，claim 只记录不承诺独占。',
     parameters: PARAMS.plan,
     isConcurrencySafe: () => false,
     run: async (args, exec, ctx) => {
@@ -681,6 +686,7 @@ const TOOLS = [
           goal: args?.goal,
           gap: args?.gap,
           scope: args?.scope,
+          release: args?.release,
           decisions: args?.decisions,
           steps: args?.steps,
           parallel: args?.parallel,
@@ -849,10 +855,14 @@ const TOOLS = [
           if (h.statusState === 'missing') flags.push('STATUS 未生成');
           if (h.statusState === 'foreign') flags.push('statusFile 不是 STATUS.md（写入会被拒）');
           if (h.planOk === false) flags.push('计划文件不在');
-          if (h.closed) flags.push('已收尾');
           if (!p.gate) flags.push('无门禁');
           if (flags.length) bad += 1;
-          L.push(`- ${k}  ${p.title}  [${p.status}]${flags.length ? `  ⚠ ${flags.join('；')}` : '  ✓'}  ${p.source}`);
+          // 「已收尾」是正常终态，不是待修问题。2026-11-21 修：曾把它算进 flags 并累加 bad，
+          // 导致 5 个正常收尾的项目被报成「指针需要处理」，误导下一轮盘点。
+          const mark = flags.length
+            ? `⚠ ${flags.join('；')}${h.closed ? '（已收尾）' : ''}`
+            : `✓${h.closed ? '（已收尾）' : ''}`;
+          L.push(`- ${k}  ${p.title}  [${p.status}]  ${mark}  ${p.source}`);
         }
         if (bad) L.push(`\n⚠ ${bad} 个项目的指针需要处理：steward_project action=update 修指针，或 action=remove confirm=true 删掉不用的档案`);
         return { text: L.join('\n'), projects: all };

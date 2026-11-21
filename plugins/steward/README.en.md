@@ -35,7 +35,7 @@ Optional: map phrases to one of your workspaces so placement suggestions get sha
 |---|---|
 | `steward_card` | Splits a one-line requirement into the questions that must be settled, suggests which `AGENTS.md` and which section it belongs to, and lists matching existing rules, suspected conflicts and the blind spot people usually miss. Its **deep-question** block asks the whole open frontier in one round (each question with a recommended answer) plus exit criteria; feed the answers back into another card call to recompute the next round (factual questions are looked up by the agent). Advice only — it never blocks an action. Use it first: **no file edits, no conclusions**. |
 | `steward_commit` | Writes a confirmed rule into the target `AGENTS.md`: dedupe, back up, record the ledger entry, optionally run your own `docs-lint` gate, then report file and line numbers. |
-| `steward_plan` | Project plans: `save` writes `PLAN-*.md` in the workspace root (6 mandatory sections, optional gap / parallel / mode sections), `get` / `list` read them, `update` ticks steps and logs progress. Update semantics are `merge` / `append` / `replace`; the default `merge` never wipes existing check marks. `init` / `ticket` / `claim` / `resolve` are controlled writes for the decision-ticket section (create / add / claim / resolve; read-modify-write is non-atomic, `claim` is a record only and promises no exclusivity). |
+| `steward_plan` | Project plans: `save` writes `PLAN-*.md` in the workspace root (6 mandatory sections, optional gap / release / parallel / mode sections), `get` / `list` read them, `update` ticks steps and logs progress. `check` also verifies quality-first / `engines.dsh` / source-repo ownership on plans created from 2026-11-21 (warning only, never blocking). Update semantics are `merge` / `append` / `replace`; the default `merge` never wipes existing check marks. `init` / `ticket` / `claim` / `resolve` are controlled writes for the decision-ticket section (create / add / claim / resolve; read-modify-write is non-atomic, `claim` is a record only and promises no exclusivity). |
 | `steward_search` | Searches every `AGENTS.md`, the plugin registry and `PLAN-*.md` for the literal text and returns `path:line`, so "did I say this before?" does not rely on memory. |
 | `steward_ledger` | Lists every rule registered in the ledger and marks whether it can still be found in its file (missing = hand-edited or deleted). |
 | `steward_change` | **Change ledger**: writes one change into `~/.dsh/CHANGES.md` (date / object / what changed / evidence / rollback / pointer) and can stamp a project `STATUS.md` "last updated"; `action=list` shows recent rows. |
@@ -63,17 +63,20 @@ Optional: map phrases to one of your workspaces so placement suggestions get sha
 
 The plugin ships no database of its own.
 
-## Optional sections: gap / parallel·worktree / effort
+## Optional sections: gap / release / parallel·worktree / effort
 
-Beyond the six mandatory sections a plan may carry three optional ones; omit them and they never appear, so small projects are not forced into the format.
+Beyond the six mandatory sections a plan may carry four optional ones; omit them and they never appear, so small projects are not forced into the format.
 
 | Section | Parameter | When to add it |
 |---|---|---|
 | Gap | `gap` | Benchmark / parity / selection / porting projects: per item "what it has / where we stand / verdict / landing spot" |
+| Packaging & release | `release` | Delivery projects answer three questions: version binding (`engines.dsh` single range, no hard-coded rc), source-repo ownership (unpublished → `dsh-plugins-private`, published → public repo), release gate; `scaffold` and a new-plan `save` include these three rows by default |
 | Parallel / worktree | `parallel` | The project has independent steps: which steps can run in parallel, which tree (name + base branch/commit), merge-back order and gate, which same-file steps must stay serial. A step tagged `[并行]` makes `check` require this section |
 | Effort | `modes` | 5+ steps or effort switching: per-step High/Max with reasons and switch points |
 
 `check` only **warns** about the parallel section: empty section, no tree attribution (main tree / tree name), or steps tagged `[并行]` without the section. Plans with `status: done` are not checked.
+
+From 2026-11-21, new plans (`created >= 2026-11-21`, or file mtime after this change) are also checked for the quality-first sentence, `engines.dsh` binding and source-repo ownership — one warning each, never blocking; existing plans are not retrofitted.
 
 ## Three update modes of `save`
 

@@ -30,7 +30,7 @@ fs.writeFileSync(
 
 process.env.KOUJING_HOME = TMP;
 process.env.KOUJING_ISOLATED = '1';
-const { listPlans } = await import('file:///D:/dsh/dsh-plugins/plugins/steward/lib/plan.js');
+const { listPlans } = await import(new URL('../lib/plan.js', import.meta.url).href);
 const rows = listPlans();
 const got = rows.map((r) => r.title).sort();
 const want = ['根计划', '通用计划', '主题计划', '项目计划'].sort();

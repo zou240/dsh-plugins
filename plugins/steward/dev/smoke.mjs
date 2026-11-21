@@ -13,15 +13,18 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = path.join(HERE, '.home');
 const WS = path.join(HERE, '.ws');
 const WS2 = path.join(HERE, '.ws2');
+const WS3 = path.join(HERE, '.ws2-extra');
 const DSH = path.join(HOME, '.dsh');
 
 fs.rmSync(HOME, { recursive: true, force: true });
 fs.rmSync(WS, { recursive: true, force: true });
 fs.rmSync(WS2, { recursive: true, force: true });
+fs.rmSync(WS3, { recursive: true, force: true });
 fs.mkdirSync(path.join(DSH, 'storages'), { recursive: true });
 fs.mkdirSync(path.join(DSH, 'koujing'), { recursive: true });
 fs.mkdirSync(WS, { recursive: true });
 fs.mkdirSync(WS2, { recursive: true });
+fs.mkdirSync(WS3, { recursive: true });
 
 fs.writeFileSync(
   path.join(DSH, 'AGENTS.md'),
@@ -336,7 +339,7 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const scSaved = plan.parsePlan(fs.readFileSync(sc.file, 'utf8'));
 ok(
   '15.1 scaffold 的节顺序 = 节模型顺序（无 gap/parallel/modes）',
-  eq(plan.parseSections(fs.readFileSync(sc.file, 'utf8')).map((s) => s.name), ['目标', '范围', '步骤', '验收', '风险 / 回滚', '进度记录']),
+  eq(plan.parseSections(fs.readFileSync(sc.file, 'utf8')).map((s) => s.name), ['目标', '范围', '打包与发布物', '步骤', '验收', '风险 / 回滚', '进度记录']),
   plan.parseSections(fs.readFileSync(sc.file, 'utf8')).map((s) => s.name).join(' | '),
 );
 plan.savePlan({ workspace: WS2, title: 'demo-scaffold' });
@@ -405,6 +408,68 @@ ok(
 // 原子写：所有 save / update / scaffold 之后目录里不能残留临时文件
 const tmpLeft = [...fs.readdirSync(WS), ...fs.readdirSync(WS2)].filter((n) => /\.tmp-\d+-\d+$/.test(n));
 ok('15.7 原子写不残留 .tmp-* 半成品', tmpLeft.length === 0, tmpLeft.join(',') || '无');
+
+// 16 2026-11-21：质量优先 / engines.dsh / 源码归仓 三项机检
+// 判据只对新计划（created >= 2026-11-21 或本次改动后 mtime）报 WARN，不回溯存量正文。
+const codesOf = (a) => a.issues.filter((i) => i.code?.startsWith('PLAN_')).map((i) => i.code);
+const newPlanText = mkPlan().replace('created: 2026-11-06', 'created: 2026-11-21');
+const aMissing = plan.auditPlanText(newPlanText);
+ok(
+  '16.1 新计划缺三项 → 恰 3 条 WARN 且不阻断',
+  aMissing.ok === true && codesOf(aMissing).length === 3 && !aMissing.issues.some((i) => i.level === 'fail'),
+  JSON.stringify(aMissing.issues),
+);
+const filled = newPlanText
+  .replace('## 目标\n\nx', '## 目标\n\n**质量优先**：口径 / 验收 / 证据按质量完成度定，成本与速度排后；……')
+  .replace(
+    '## 步骤',
+    '## 打包与发布物\n\n| 版本绑定 | `engines.dsh` 用单条范围 |\n| 源码归仓 | 未发布进 dsh-plugins-private |\n\n## 步骤',
+  );
+const aFilled = plan.auditPlanText(filled);
+ok('16.2 补齐三项后归零', codesOf(aFilled).length === 0 && aFilled.ok === true, JSON.stringify(aFilled.issues));
+const aLegacy = plan.auditPlanText(mkPlan());
+ok('16.3 存量计划（created < 2026-11-21）不回溯报三项', codesOf(aLegacy).length === 0, JSON.stringify(aLegacy.issues));
+const noCreated = mkPlan().replace(/^created:.*\n/m, '');
+const aMtimeNew = plan.auditPlanText(noCreated, { mtimeMs: Date.parse('2026-11-21T17:00:01+08:00') });
+const aMtimeOld = plan.auditPlanText(noCreated, { mtimeMs: Date.parse('2026-11-20T17:00:00+08:00') });
+ok(
+  '16.4 无 created 时按 mtime 判新计划',
+  codesOf(aMtimeNew).length === 3 && codesOf(aMtimeOld).length === 0,
+  JSON.stringify({ new: codesOf(aMtimeNew), old: codesOf(aMtimeOld) }),
+);
+const sc3a = plan.scaffoldPlan({ workspace: WS3, title: 'demo-new-plan-1', goal: '整理会议纪要', scope: '- 做：整理', steps: ['a', 'b', 'c'] });
+const sc3b = plan.scaffoldPlan({ workspace: WS3, title: 'demo-new-plan-2', goal: '做一次数据核对', scope: '- 做：核对', steps: ['a', 'b', 'c'] });
+const sc3c = plan.scaffoldPlan({ workspace: WS3, title: 'demo-new-plan-3', goal: '写一份操作说明', scope: '- 做：说明', steps: ['a', 'b', 'c'] });
+const three = [sc3a, sc3b, sc3c].map((r) =>
+  plan.auditPlanText(fs.readFileSync(r.file, 'utf8'), { mtimeMs: fs.statSync(r.file).mtimeMs }),
+);
+ok(
+  '16.5 新写 3 份计划不刻意提醒也带三项',
+  sc3a.created && sc3b.created && sc3c.created && three.every((a) => codesOf(a).length === 0 && a.ok),
+  JSON.stringify(three.map((a) => codesOf(a))),
+);
+const sv = plan.savePlan({
+  workspace: WS3,
+  title: 'demo-save-default',
+  goal: '整理会议纪要',
+  scope: '- 做：整理',
+  steps: ['a', 'b', 'c'],
+  accept: '整理完',
+  risks: '不改原文件',
+});
+const svText = fs.readFileSync(sv.file, 'utf8');
+const svAudit = plan.auditPlanText(svText, { mtimeMs: fs.statSync(sv.file).mtimeMs });
+ok(
+  '16.6 save 新建计划也自带三项（主流程不是只有 scaffold）',
+  sv.created && /质量优先/.test(svText) && /engines\.dsh/.test(svText) && /dsh-plugins-private/.test(svText) && codesOf(svAudit).length === 0,
+  JSON.stringify(svAudit.issues),
+);
+const allIsolated = plan.auditAllPlans();
+ok(
+  '16.7 隔离工作区批量 check 无新增 ERROR',
+  allIsolated.every((r) => r.ok),
+  JSON.stringify(allIsolated.filter((r) => !r.ok).map((r) => r.file)),
+);
 
 console.log(out.join('\n'));
 console.log(`\n台账文件：${core.ledgerPath()}`);
